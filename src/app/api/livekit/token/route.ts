@@ -9,5 +9,5 @@ export const POST = handle(async (req) => {
   const { channel } = await requireChannelAccess(channelId, user._id);
   if (channel.type !== "voice") throw new HttpError(400, "این کانال صوتی نیست");
 
-  return { token: await createVoiceToken(channelId, toUser(user)), url: publicLiveKitUrl() };
+  return { token: await createVoiceToken(channelId, toUser(user)), url: publicLiveKitUrl(req) };
 });

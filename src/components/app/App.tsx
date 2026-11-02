@@ -2,15 +2,16 @@
 
 import "@livekit/components-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RoomAudioRenderer, RoomContext } from "@livekit/components-react";
-import { DisconnectReason, Room, RoomEvent, Track, type RemoteTrackPublication } from "livekit-client";
-import { Hash, Menu, PanelLeft, Phone, Search, Users, Volume2, X } from "lucide-react";
+import { RoomAudioRenderer, RoomContext, useAudioPlayback } from "@livekit/components-react";
+import { DisconnectReason, LocalAudioTrack, Room, RoomEvent, Track, type RemoteTrackPublication } from "livekit-client";
+import { Hash, Menu, PanelLeft, Phone, Search, Users, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
 import { useCloseOnBack, useSwipe } from "@/lib/mobile";
 import { showNotification } from "@/lib/notifications";
 import { getSocket } from "@/lib/socket";
+import { acquireMic, micErrorMessage, voiceUnsupportedReason } from "@/lib/voice";
 import type {
   ChannelDTO,
   LiveMessageDTO,
@@ -239,9 +240,20 @@ export default function App({
     }
   }, [lowData, room, connection]);
 
+  // Safari blocks sound until the page is tapped; when that happens this offers a button to turn it on.
+  const { canPlayAudio, startAudio } = useAudioPlayback(room);
+
   const joinVoice = async (channel: ChannelDTO) => {
     if (connection?.channelId === channel.id || joiningId) return;
+    const unsupported = voiceUnsupportedReason();
+    if (unsupported) return notify(unsupported);
     setJoiningId(channel.id);
+
+    // Safari and phones only honour sound and the mic prompt from inside the tap itself, so start
+    // both before the first await; the token request and connection below would use up the gesture.
+    room.startAudio().catch(() => {});
+    const mic = deafened ? null : acquireMic(room.options.audioCaptureDefaults);
+
     try {
       const { token, url } = await api<{ token: string; url: string }>("/api/livekit/token", {
         body: { channelId: channel.id },
@@ -254,17 +266,41 @@ export default function App({
         channelName: channel.name,
         serverName: detail?.server.name ?? "",
       });
-      try {
-        await room.localParticipant.setMicrophoneEnabled(!deafened);
-      } catch {
-        notify("دسترسی به میکروفون داده نشد. فقط می‌توانید بشنوید");
+    } catch (err) {
+      console.error(err);
+      notify(
+        navigator.onLine === false
+          ? "اتصال اینترنت برقرار نیست"
+          : "اتصال به کانال صوتی برقرار نشد. اتصال اینترنت را بررسی کنید و دوباره تلاش کنید",
+      );
+      // Switching channels already left the old one, so don't keep showing it as connected.
+      if (room.state !== "disconnected") room.disconnect().catch(() => {});
+      setConnection(null);
+      mic?.then((t) => t instanceof LocalAudioTrack && t.stop());
+      setJoiningId(null);
+      return;
+    }
+
+    // Connected. A missing microphone only means this person listens.
+    let published = false;
+    try {
+      const track = await mic;
+      if (track instanceof LocalAudioTrack) {
+        await room.localParticipant.publishTrack(track, { source: Track.Source.Microphone });
+        published = true;
+      } else if (track) {
+        notify(micErrorMessage(track));
       }
     } catch (err) {
       console.error(err);
-      notify("اتصال به کانال صوتی برقرار نشد");
+      notify(micErrorMessage(err));
     } finally {
       setJoiningId(null);
+      // Don't leave the mic (and the browser's recording indicator) on if it never got published.
+      if (!published) mic?.then((t) => t instanceof LocalAudioTrack && t.stop());
     }
+    // An active microphone lets iOS play everyone else's audio without another tap.
+    room.startAudio().catch(() => {});
   };
 
   const leaveVoice = async () => {
@@ -427,6 +463,16 @@ export default function App({
               </div>
             )}
           </header>
+
+          {connection && !canPlayAudio && !deafened && (
+            <button
+              onClick={() => startAudio().catch(() => notify("پخش صدا ممکن نشد. دوباره ضربه بزنید"))}
+              className="flex shrink-0 items-center justify-center gap-2 border-b border-white/5 bg-accent-strong px-3 py-2.5 text-sm font-semibold text-white select-none"
+            >
+              <VolumeX className="size-4 shrink-0" />
+              مرورگر صدای تماس را متوقف کرده است. برای شنیدن ضربه بزنید
+            </button>
+          )}
 
           {connection && channel?.id !== connection.channelId && (
             <VoiceBar connection={connection} settings={settings} onOpen={openConnectedChannel} onLeave={leaveVoice} />

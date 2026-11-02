@@ -1,39 +1,51 @@
 "use client";
 
 import { useState } from "react";
-import { useLocalParticipant } from "@livekit/components-react";
+import { useLocalParticipant, useRoomContext } from "@livekit/components-react";
 import { Gauge, HeadphoneOff, Headphones, Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
 import { cn } from "@/lib/format";
+import { canShareScreenAudio, micErrorMessage } from "@/lib/voice";
 import type { VoiceSettings } from "./App";
 
 /** Mic and deafen toggles plus error reporting, shared by the full controls and the mobile voice bar. */
 export function useVoiceToggles(settings: VoiceSettings) {
   const local = useLocalParticipant();
   const { localParticipant, isMicrophoneEnabled } = local;
+  const room = useRoomContext();
   const [error, setError] = useState<string>();
+  // Every tap is a chance to unblock sound the browser held back (Safari), as long as it happens before an await.
+  const unlockAudio = () => room.startAudio().catch(() => {});
 
-  const attempt = async (action: () => Promise<unknown>, message: string, ignoreCancel = false) => {
+  const attempt = async (
+    action: () => Promise<unknown>,
+    message: string | ((err: unknown) => string),
+    ignoreCancel = false,
+  ) => {
     setError(undefined);
     try {
       await action();
     } catch (err) {
+      console.error(err);
       // Closing the browser's screen picker throws NotAllowedError; that's not worth an error message.
-      if (!(ignoreCancel && (err as Error).name === "NotAllowedError")) setError(message);
+      if (!(ignoreCancel && (err as Error).name === "NotAllowedError"))
+        setError(typeof message === "function" ? message(err) : message);
     }
   };
 
   const toggleMic = () =>
     attempt(async () => {
+      unlockAudio();
       if (settings.deafened && !isMicrophoneEnabled) settings.setDeafened(false);
       await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
-    }, "دسترسی به میکروفون ممکن نشد");
+    }, micErrorMessage);
 
   const toggleDeafen = () =>
     attempt(async () => {
       const next = !settings.deafened;
+      if (!next) unlockAudio();
       settings.setDeafened(next);
       await localParticipant.setMicrophoneEnabled(!next);
-    }, "دسترسی به میکروفون ممکن نشد");
+    }, micErrorMessage);
 
   return { ...local, error, attempt, toggleMic, toggleDeafen };
 }
@@ -101,7 +113,7 @@ export default function VoiceControls({
                 active={isScreenShareEnabled}
                 onClick={() =>
                   attempt(
-                    () => localParticipant.setScreenShareEnabled(!isScreenShareEnabled, { audio: true }),
+                    () => localParticipant.setScreenShareEnabled(!isScreenShareEnabled, { audio: canShareScreenAudio() }),
                     "اشتراک صفحه ممکن نشد",
                     true,
                   )

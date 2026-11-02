@@ -1,0 +1,41 @@
+import { createLocalAudioTrack, isBrowserSupported, type AudioCaptureOptions, type LocalAudioTrack } from "livekit-client";
+
+// Browser quirks around calls, mostly Safari and phones.
+
+/** Why this browser can't join a call at all, or null when it can. */
+export function voiceUnsupportedReason() {
+  if (!isBrowserSupported() || typeof RTCPeerConnection === "undefined") {
+    // In-app browsers (Telegram, Instagram…) often ship without WebRTC.
+    return "این مرورگر از تماس صوتی پشتیبانی نمی‌کند. صدامون را در Safari یا Chrome باز کنید";
+  }
+  return null;
+}
+
+/** Browsers only expose the microphone on HTTPS (and localhost). */
+export const canUseMic = () => window.isSecureContext && !!navigator.mediaDevices?.getUserMedia;
+
+export function micErrorMessage(err: unknown) {
+  if (!canUseMic()) return "میکروفون فقط روی اتصال امن (HTTPS) در دسترس است. فقط می‌توانید بشنوید";
+  const name = (err as Error | undefined)?.name;
+  if (name === "NotAllowedError" || name === "SecurityError")
+    return "دسترسی به میکروفون داده نشد. از تنظیمات مرورگر اجازه دهید";
+  if (name === "NotFoundError" || name === "OverconstrainedError") return "میکروفونی پیدا نشد";
+  if (name === "NotReadableError" || name === "AbortError") return "میکروفون در اختیار برنامهٔ دیگری است";
+  return "دسترسی به میکروفون ممکن نشد";
+}
+
+/**
+ * Starts capturing the microphone right away, so the permission prompt belongs to the tap that asked for it
+ * and iOS switches its audio session before any remote audio starts playing. Never rejects.
+ */
+export function acquireMic(options?: AudioCaptureOptions): Promise<LocalAudioTrack | Error> {
+  if (!canUseMic()) return Promise.resolve(new Error("insecure context"));
+  return createLocalAudioTrack(options).catch((err: unknown) => (err instanceof Error ? err : new Error(String(err))));
+}
+
+/**
+ * Only Chromium can capture tab or system audio with a screen share (`userAgentData` exists only there).
+ * Elsewhere, asking for audio can fail the whole request, and getDisplayMedia can't be retried outside
+ * the original click, so don't ask.
+ */
+export const canShareScreenAudio = () => typeof navigator !== "undefined" && "userAgentData" in navigator;
