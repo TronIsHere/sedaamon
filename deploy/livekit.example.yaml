@@ -1,0 +1,31 @@
+# Production LiveKit config. Copy to ./livekit.yaml on the server and fill in the CAPS values.
+port: 7880 # signaling, reached only through nginx (do not open in the firewall)
+
+rtc:
+  tcp_port: 7881 # ICE over TCP fallback
+  port_range_start: 50000
+  port_range_end: 60000
+  # Don't look up our IP through public STUN servers (they may be unreachable inside Iran);
+  # advertise the server's public IP directly.
+  use_external_ip: false
+  node_ip: SERVER_PUBLIC_IP
+
+keys:
+  API_KEY: API_SECRET_AT_LEAST_32_CHARS
+
+webhook:
+  api_key: API_KEY
+  urls:
+    - http://127.0.0.1:3000/api/livekit/webhook
+
+# Built-in TURN relay for users behind strict NAT or networks that block UDP.
+turn:
+  enabled: true
+  domain: turn.example.ir
+  udp_port: 3478
+  tls_port: 5349
+  cert_file: /etc/ssl/sedaamon/turn.example.ir.fullchain.pem
+  key_file: /etc/ssl/sedaamon/turn.example.ir.key
+
+logging:
+  level: info

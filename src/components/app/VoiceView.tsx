@@ -1,0 +1,131 @@
+"use client";
+
+import { GridLayout, ParticipantTile, useParticipants, useTracks } from "@livekit/components-react";
+import { Track } from "livekit-client";
+import { Loader2, MicOff, Volume2 } from "lucide-react";
+import { cn } from "@/lib/format";
+import { toPersianDigits } from "@/lib/phone";
+import type { ChannelDTO, VoiceParticipant } from "@/lib/types";
+import type { VoiceConnection, VoiceSettings } from "./App";
+import Avatar from "./Avatar";
+import VoiceControls from "./VoiceControls";
+
+export default function VoiceView({
+  channel,
+  participants,
+  connection,
+  joining,
+  settings,
+  onJoin,
+  onLeave,
+}: {
+  channel: ChannelDTO;
+  participants: VoiceParticipant[];
+  connection: VoiceConnection | null;
+  joining: boolean;
+  settings: VoiceSettings;
+  onJoin: () => void;
+  onLeave: () => void;
+}) {
+  if (connection?.channelId === channel.id) {
+    return (
+      <div className="bg-glow relative flex min-h-0 flex-1 flex-col">
+        <ConnectedStage participants={participants} />
+        <div className="flex shrink-0 justify-center px-3 pt-2 pb-safe-4 sm:pb-5">
+          <div className="rounded-full bg-ink-900/80 p-2 shadow-2xl ring-1 ring-white/10 backdrop-blur">
+            <VoiceControls settings={settings} onLeave={onLeave} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-glow grid flex-1 place-items-center p-6 text-center">
+      <div className="w-full max-w-sm rounded-3xl bg-ink-900/70 p-8 ring-1 ring-white/5 backdrop-blur">
+        <span className="relative mx-auto grid size-20 place-items-center rounded-3xl bg-accent-strong text-white shadow-2xl shadow-accent-strong/40">
+          <Volume2 className="size-9" />
+          {participants.length > 0 && (
+            <span className="absolute inset-0 animate-ping rounded-3xl bg-accent-strong/30 [animation-duration:2s]" />
+          )}
+        </span>
+        <h2 className="mt-5 text-xl font-bold">{channel.name}</h2>
+        <p className="mt-1 text-sm text-muted">
+          {participants.length
+            ? `${toPersianDigits(participants.length)} نفر الان در کانال هستند`
+            : "کسی در کانال نیست. اولین نفر باشید."}
+        </p>
+        {participants.length > 0 && (
+          <div className="mt-5 flex flex-wrap justify-center gap-4">
+            {participants.map((p) => (
+              <div key={p.id} className="flex flex-col items-center gap-1.5">
+                <Avatar user={p} />
+                <span className="max-w-20 truncate text-xs text-muted">{p.name}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        {connection && (
+          <p className="mt-5 text-xs text-muted">با پیوستن به این کانال، از «{connection.channelName}» خارج می‌شوید.</p>
+        )}
+        <button
+          onClick={onJoin}
+          disabled={joining}
+          className="mx-auto mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-accent-strong px-6 py-3 font-semibold text-white shadow-lg shadow-accent-strong/30 hover:bg-accent disabled:opacity-60"
+        >
+          {joining && <Loader2 className="size-4 animate-spin" />}
+          پیوستن به کانال
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** Video tiles when anyone shares a camera or screen; otherwise big avatar cards that glow while people talk. */
+function ConnectedStage({ participants }: { participants: VoiceParticipant[] }) {
+  const tracks = useTracks(
+    [
+      { source: Track.Source.Camera, withPlaceholder: true },
+      { source: Track.Source.ScreenShare, withPlaceholder: false },
+    ],
+    { onlySubscribed: false },
+  );
+  const people = useParticipants();
+  const hasVideo = tracks.some((t) => t.publication && !t.publication.isMuted);
+
+  if (hasVideo) {
+    return (
+      <div data-lk-theme="default" className="min-h-0 flex-1 p-2 sm:p-4" dir="ltr">
+        <GridLayout tracks={tracks} style={{ height: "100%" }}>
+          <ParticipantTile />
+        </GridLayout>
+      </div>
+    );
+  }
+
+  const colors = new Map(participants.map((p) => [p.id, p.color]));
+  return (
+    <div className="scrollbar-thin grid min-h-0 flex-1 content-center overflow-y-auto p-4 sm:p-8">
+      <div className="mx-auto grid w-full max-w-4xl grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
+        {people.map((p) => (
+          <div
+            key={p.identity}
+            className={cn(
+              "flex aspect-square flex-col items-center justify-center gap-3 rounded-3xl bg-ink-900/80 p-4 ring-1 transition",
+              p.isSpeaking ? "shadow-2xl shadow-accent-strong/30 ring-2 ring-accent" : "ring-white/5",
+            )}
+          >
+            <span className={cn("rounded-full transition", p.isSpeaking && "ring-4 ring-accent/40")}>
+              <Avatar user={{ name: p.name || "?", color: colors.get(p.identity) ?? "#6c5ce7" }} size="lg" speaking={p.isSpeaking} />
+            </span>
+            <span className="flex max-w-full items-center gap-1.5 text-sm font-semibold">
+              <span className="truncate">{p.name}</span>
+              {!p.isMicrophoneEnabled && <MicOff className="size-3.5 shrink-0 text-danger" />}
+            </span>
+            {p.isLocal && <span className="-mt-2 text-[11px] text-muted">شما</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
