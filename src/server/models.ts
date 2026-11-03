@@ -7,6 +7,13 @@ const userSchema = new Schema(
     phone: { type: String, required: true, unique: true },
     name: { type: String, default: "" },
     color: { type: String, required: true },
+    bio: { type: String, default: "" },
+    // Set when a picture is uploaded; it versions the avatar URL. The picture itself lives in the Avatar collection.
+    avatarAt: { type: Date, default: null },
+    status: { type: String, enum: ["available", "busy", "away", "gaming"], default: "available" },
+    statusText: { type: String, default: "" },
+    // Written when the user's last open connection goes away.
+    lastSeenAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
@@ -39,7 +46,8 @@ const memberSchema = new Schema(
   {
     server: { type: ObjectId, ref: "Server", required: true },
     user: { type: ObjectId, ref: "User", required: true, index: true },
-    role: { type: String, enum: ["owner", "member"], default: "member" },
+    role: { type: String, enum: ["owner", "admin", "member"], default: "member" },
+    mutedUntil: { type: Date, default: null },
   },
   { timestamps: true },
 );
@@ -60,10 +68,63 @@ const messageSchema = new Schema(
     channel: { type: ObjectId, ref: "Channel", required: true },
     author: { type: ObjectId, ref: "User", required: true },
     content: { type: String, required: true },
+    editedAt: { type: Date, default: null },
+    replyTo: { type: ObjectId, ref: "Message", default: null },
+    reactions: {
+      type: [{ _id: false, emoji: { type: String, required: true }, users: [{ type: ObjectId, ref: "User" }] }],
+      default: [],
+    },
   },
   { timestamps: true },
 );
 messageSchema.index({ channel: 1, _id: -1 });
+
+// Kept apart from User so the picture is only read when someone asks for it.
+const avatarSchema = new Schema({
+  user: { type: ObjectId, ref: "User", required: true, unique: true },
+  contentType: { type: String, required: true },
+  data: { type: Buffer, required: true },
+});
+
+// A direct conversation. Its id doubles as the channel id of its messages.
+const conversationSchema = new Schema(
+  {
+    // Sorted ids joined with ":", so the same two people always map to one conversation.
+    key: { type: String, required: true, unique: true },
+    participants: { type: [{ type: ObjectId, ref: "User" }], required: true, index: true },
+    lastMessageAt: { type: Date, default: null },
+  },
+  { timestamps: true },
+);
+
+const eventSchema = new Schema(
+  {
+    server: { type: ObjectId, ref: "Server", required: true, index: true },
+    title: { type: String, required: true },
+    description: { type: String, default: "" },
+    startsAt: { type: Date, required: true, index: true },
+    channel: { type: ObjectId, ref: "Channel", default: null },
+    createdBy: { type: ObjectId, ref: "User", required: true },
+    interested: [{ type: ObjectId, ref: "User" }],
+    // Each alert goes out once; the scheduler marks them here.
+    remindedAt: { type: Date, default: null },
+    startedAt: { type: Date, default: null },
+    // TTL index: MongoDB removes the event a week after it began.
+    expiresAt: { type: Date, required: true, expires: 0 },
+  },
+  { timestamps: true },
+);
+
+// One row per pair and direction. A request is "pending" until the other side accepts it.
+const friendshipSchema = new Schema(
+  {
+    requester: { type: ObjectId, ref: "User", required: true },
+    recipient: { type: ObjectId, ref: "User", required: true, index: true },
+    status: { type: String, enum: ["pending", "accepted"], default: "pending" },
+  },
+  { timestamps: true },
+);
+friendshipSchema.index({ requester: 1, recipient: 1 }, { unique: true });
 
 type ModelOf<S extends Schema> = Model<InferSchemaType<S>>;
 
@@ -78,3 +139,7 @@ export const Server = getModel("Server", serverSchema);
 export const Member = getModel("Member", memberSchema);
 export const Channel = getModel("Channel", channelSchema);
 export const Message = getModel("Message", messageSchema);
+export const Friendship = getModel("Friendship", friendshipSchema);
+export const Avatar = getModel("Avatar", avatarSchema);
+export const Conversation = getModel("Conversation", conversationSchema);
+export const Event = getModel("Event", eventSchema);

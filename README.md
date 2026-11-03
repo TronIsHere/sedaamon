@@ -7,6 +7,10 @@ Self-hosted voice, video and text channels in the style of Discord, built to run
 - Phone number login with an SMS code (Kavenegar, or printed to the log in development)
 - Servers with invite links, text channels and voice channels
 - Realtime chat (Socket.io), Jalali dates and a Persian right-to-left UI
+- Message replies, edit, delete and emoji reactions, plus typing indicators
+- Online presence for server members and friends
+- Profile pages (name, bio, last seen, shared servers) and friend requests between people who share a server
+- Roles: owner, admin and member. Admins manage channels, delete messages, mute and kick members below them; only the owner assigns admins
 - Voice channels you stay connected to while browsing text channels, with camera, screen share, mute and deafen
 - Live "who's in the voice channel" list, driven by LiveKit webhooks
 - Low-data mode that stops receiving video and keeps audio, for weak connections

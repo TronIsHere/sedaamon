@@ -4,30 +4,46 @@ import "@livekit/components-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoomAudioRenderer, RoomContext } from "@livekit/components-react";
 import { DisconnectReason, Room, RoomEvent, Track, type RemoteTrackPublication } from "livekit-client";
-import { Hash, Menu, PanelLeft, Phone, Search, Users, Volume2, X } from "lucide-react";
+import { Hash, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
+import { can, isMuted, ROLE_LABEL } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { useCloseOnBack, useSwipe } from "@/lib/mobile";
 import { showNotification } from "@/lib/notifications";
+import { statusLine } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
-import type {
-  ChannelDTO,
-  LiveMessageDTO,
-  MeDTO,
-  MemberDTO,
-  ServerDetailDTO,
-  ServerDTO,
-  VoiceParticipant,
-  VoiceStates,
+import {
+  DM_SCOPE,
+  type ChannelDTO,
+  type DmDTO,
+  type DmListDTO,
+  type EventAlert,
+  type EventDTO,
+  type FriendsDTO,
+  type LiveMessageDTO,
+  type MeDTO,
+  type MemberDTO,
+  type PresenceEvent,
+  type UserDTO,
+  type ServerDetailDTO,
+  type ServerDTO,
+  type VoiceParticipant,
+  type VoiceStates,
 } from "@/lib/types";
+import Avatar from "./Avatar";
 import ChannelSidebar from "./ChannelSidebar";
 import ChatView from "./ChatView";
-import { CreateChannelDialog, ProfileDialog, ServerDialog } from "./Dialogs";
+import { CreateChannelDialog, EditChannelDialog, ProfileDialog, ServerDialog } from "./Dialogs";
+import EventsDialog, { formatEventWhen } from "./EventsDialog";
+import FriendsDialog from "./FriendsDialog";
 import MembersList from "./MembersList";
+import ProfileCard from "./ProfileCard";
 import ServerRail from "./ServerRail";
+import ServerSettingsDialog from "./ServerSettingsDialog";
 import VoiceBar from "./VoiceBar";
 import VoiceView from "./VoiceView";
+import { WatchProvider } from "./WatchTogether";
 
 export interface VoiceConnection {
   channelId: string;
@@ -43,7 +59,16 @@ export interface VoiceSettings {
   setLowData: (v: boolean) => void;
 }
 
-type Dialog = { kind: "server" } | { kind: "profile" } | { kind: "channel"; type: ChannelDTO["type"] } | null;
+type Dialog =
+  | { kind: "server" }
+  | { kind: "profile" }
+  | { kind: "serverSettings" }
+  | { kind: "events" }
+  | { kind: "friends" }
+  | { kind: "user"; userId: string }
+  | { kind: "channel"; type: ChannelDTO["type"] }
+  | { kind: "editChannel"; channelId: string }
+  | null;
 
 /** channelId → unread messages that arrived while the channel wasn't on screen */
 export type Unread = Record<string, { serverId: string; count: number }>;
@@ -74,11 +99,19 @@ export default function App({
   const [search, setSearch] = useState<string | null>(null);
   const [unread, setUnread] = useState<Unread>({});
   const [toast, setToast] = useState<string | null>(null);
+  /** userId → connected right now. Fed by server details, the friend list and live "presence" events. */
+  const [online, setOnline] = useState<Record<string, boolean>>({});
+  const [friends, setFriends] = useState<FriendsDTO | null>(null);
+  const [dms, setDms] = useState<DmDTO[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
   const lastChannelByServer = useRef<Record<string, string>>({});
   const lowDataRef = useRef(lowData);
   const activeChannelRef = useRef(activeChannelId);
   const serversRef = useRef(servers);
+  const activeServerRef = useRef(activeServerId);
+  const detailRef = useRef(detail);
+  const connectionRef = useRef(connection);
+  const dmsRef = useRef(dms);
 
   const [room] = useState(
     () =>
@@ -111,14 +144,56 @@ export default function App({
     window.setTimeout(() => setToast((t) => (t === message ? null : t)), 5000);
   }, []);
 
+  const markOnline = useCallback((ids: string[], onlineIds: string[]) => {
+    const live = new Set(onlineIds);
+    setOnline((o) => {
+      const next = { ...o };
+      for (const id of ids) next[id] = live.has(id);
+      return next;
+    });
+  }, []);
+
+  const refreshFriends = useCallback(
+    () =>
+      api<FriendsDTO>("/api/friends")
+        .then((f) => {
+          setFriends(f);
+          markOnline(f.friends.map((u) => u.id), f.online);
+        })
+        .catch(() => {}),
+    [markOnline],
+  );
+  useEffect(() => {
+    refreshFriends();
+  }, [refreshFriends]);
+
+  const refreshDms = useCallback(
+    () =>
+      api<DmListDTO>("/api/dms")
+        .then((res) => {
+          // A conversation opened a moment ago has no messages yet, so the server doesn't list it; keep the one on screen.
+          setDms((prev) => [...res.conversations, ...prev.filter((p) => p.id === activeChannelRef.current && !res.conversations.some((c) => c.id === p.id))]);
+          markOnline(res.conversations.map((c) => c.peer.id), res.online);
+          if (activeServerRef.current === DM_SCOPE && !activeChannelRef.current && res.conversations.length) {
+            setActiveChannelId(lastChannelByServer.current[DM_SCOPE] ?? res.conversations[0].id);
+          }
+        })
+        .catch(() => {}),
+    [markOnline],
+  );
+  useEffect(() => {
+    refreshDms();
+  }, [refreshDms]);
+
   // Server detail (channels, members, who is in voice) for the selected server.
   useEffect(() => {
-    if (!activeServerId) return;
+    if (!activeServerId || activeServerId === DM_SCOPE) return;
     let cancelled = false;
     api<ServerDetailDTO>(`/api/servers/${activeServerId}`)
       .then((d) => {
         if (cancelled) return;
         setDetail(d);
+        markOnline(d.members.map((m) => m.user.id), d.online);
         setVoiceStates((prev) => {
           const next = { ...prev };
           for (const c of d.channels) if (c.type === "voice") next[c.id] = d.voice[c.id] ?? [];
@@ -135,7 +210,13 @@ export default function App({
     return () => {
       cancelled = true;
     };
-  }, [activeServerId, reloadKey, notify]);
+  }, [activeServerId, reloadKey, notify, markOnline]);
+
+  const dropCall = useCallback(() => {
+    room.disconnect();
+    setConnection(null);
+    notify("کانال صوتی دیگر در دسترس نیست");
+  }, [room, notify]);
 
   // Live updates pushed by the server.
   useEffect(() => {
@@ -143,7 +224,11 @@ export default function App({
     let connectedOnce = false;
     const onConnect = () => {
       // After a reconnect we may have missed events; refetch the current server.
-      if (connectedOnce) setReloadKey((k) => k + 1);
+      if (connectedOnce) {
+        setReloadKey((k) => k + 1);
+        refreshFriends();
+        refreshDms();
+      }
       connectedOnce = true;
     };
     const onChannel = (c: ChannelDTO) =>
@@ -158,10 +243,94 @@ export default function App({
           ? { ...d, members: [...d.members, member] }
           : d,
       );
+    const onMemberUpdate = ({ serverId, member }: { serverId: string; member: MemberDTO }) => {
+      const mine = member.user.id === initialMe.id;
+      setDetail((d) =>
+        d && d.server.id === serverId
+          ? {
+              ...d,
+              members: d.members.map((m) => (m.user.id === member.user.id ? member : m)),
+              server: mine ? { ...d.server, role: member.role } : d.server,
+            }
+          : d,
+      );
+      if (!mine) return;
+      const previous = serversRef.current.find((s) => s.id === serverId)?.role;
+      setServers((list) => list.map((s) => (s.id === serverId ? { ...s, role: member.role } : s)));
+      if (previous && previous !== member.role) notify(`نقش شما در این سرور «${ROLE_LABEL[member.role]}» شد`);
+      else if (isMuted(member.mutedUntil)) notify("شما در این سرور بی‌صدا شده‌اید");
+    };
+    const onMemberRemove = ({ serverId, userId }: { serverId: string; userId: string }) =>
+      setDetail((d) =>
+        d && d.server.id === serverId ? { ...d, members: d.members.filter((m) => m.user.id !== userId) } : d,
+      );
+    const onServerUpdate = ({ id, name, inviteCode }: { id: string; name: string; inviteCode: string }) => {
+      setServers((list) => list.map((s) => (s.id === id ? { ...s, name, inviteCode } : s)));
+      setDetail((d) => (d && d.server.id === id ? { ...d, server: { ...d.server, name, inviteCode } } : d));
+    };
+    const onServerRemoved = ({ serverId, kicked, deleted }: { serverId: string; kicked: boolean; deleted?: boolean }) => {
+      const name = serversRef.current.find((s) => s.id === serverId)?.name ?? "";
+      const remaining = serversRef.current.filter((s) => s.id !== serverId);
+      setServers(remaining);
+      if (activeServerRef.current === serverId) {
+        setSearch(null);
+        setDetail(null);
+        setActiveChannelId(null);
+        setActiveServerId(remaining[0]?.id);
+      }
+      if (connectionRef.current?.serverId === serverId) dropCall();
+      setUnread((u) => Object.fromEntries(Object.entries(u).filter(([, v]) => v.serverId !== serverId)));
+      setDialog((d) => (d?.kind === "serverSettings" ? null : d));
+      notify(deleted ? `سرور «${name}» حذف شد` : kicked ? `از سرور «${name}» اخراج شدید` : `از سرور «${name}» خارج شدید`);
+    };
+    const putEvent = (e: EventDTO) =>
+      setDetail((d) =>
+        d && d.server.id === e.serverId
+          ? { ...d, events: [...d.events.filter((x) => x.id !== e.id), e].sort((a, b) => a.startsAt.localeCompare(b.startsAt)) }
+          : d,
+      );
+    const onEventDelete = ({ serverId, eventId }: { serverId: string; eventId: string }) =>
+      setDetail((d) => (d && d.server.id === serverId ? { ...d, events: d.events.filter((x) => x.id !== eventId) } : d));
+    const onEventAlert = ({ kind, event }: EventAlert) => {
+      const text =
+        kind === "start" ? `رویداد «${event.title}» شروع شد` : `رویداد «${event.title}» تا چند دقیقهٔ دیگر شروع می‌شود (${formatEventWhen(event.startsAt)})`;
+      notify(text);
+      // Only people who said they would come get a system notification.
+      if (event.interested.includes(initialMe.id)) showNotification(serversRef.current.find((s) => s.id === event.serverId)?.name ?? "صدامون", text, `event:${event.id}:${kind}`);
+    };
+    const onChannelUpdate = (c: ChannelDTO) =>
+      setDetail((d) => (d && d.server.id === c.serverId ? { ...d, channels: d.channels.map((x) => (x.id === c.id ? c : x)) } : d));
+    const onChannelDelete = ({ serverId, channelId }: { serverId: string; channelId: string }) => {
+      setDetail((d) => (d && d.server.id === serverId ? { ...d, channels: d.channels.filter((x) => x.id !== channelId) } : d));
+      if (activeChannelRef.current === channelId) {
+        const rest = detailRef.current?.channels.filter((c) => c.id !== channelId) ?? [];
+        setActiveChannelId((rest.find((c) => c.type === "text") ?? rest[0])?.id ?? null);
+      }
+      if (connectionRef.current?.channelId === channelId) dropCall();
+    };
+    // A name, picture or status changed. Replace that person wherever they are on screen.
+    const onUserUpdate = (u: UserDTO) => {
+      setMe((m) => (m.id === u.id ? { ...u, phone: m.phone, bio: m.bio } : m));
+      setDetail((d) => (d?.members.some((m) => m.user.id === u.id) ? { ...d, members: d.members.map((m) => (m.user.id === u.id ? { ...m, user: u } : m)) } : d));
+      const swap = (list: UserDTO[]) => list.map((x) => (x.id === u.id ? u : x));
+      setFriends((f) => (f ? { ...f, friends: swap(f.friends), incoming: swap(f.incoming), outgoing: swap(f.outgoing) } : f));
+      setDms((list) => (list.some((d) => d.peer.id === u.id) ? list.map((d) => (d.peer.id === u.id ? { ...d, peer: u } : d)) : list));
+    };
+    const onPresence = ({ userId, online: isOnline }: PresenceEvent) => setOnline((o) => (o[userId] === isOnline ? o : { ...o, [userId]: isOnline }));
     const onVoice = ({ channelId, participants }: { channelId: string; participants: VoiceParticipant[] }) =>
       setVoiceStates((v) => ({ ...v, [channelId]: participants }));
 
     const onMessage = (m: LiveMessageDTO) => {
+      if (m.serverId === DM_SCOPE) {
+        // A message in a conversation: float it to the top, or learn about a conversation someone just started.
+        if (!dmsRef.current.some((d) => d.id === m.channelId)) refreshDms();
+        else
+          setDms((list) =>
+            list
+              .map((d) => (d.id === m.channelId ? { ...d, lastMessageAt: m.createdAt } : d))
+              .sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "")),
+          );
+      }
       if (m.author.id === initialMe.id) return;
       const onScreen = m.channelId === activeChannelRef.current && document.visibilityState === "visible";
       if (!onScreen) {
@@ -177,19 +346,49 @@ export default function App({
     socket.on("channel:new", onChannel);
     socket.on("member:new", onMember);
     socket.on("voice:state", onVoice);
+    socket.on("member:update", onMemberUpdate);
+    socket.on("member:remove", onMemberRemove);
+    socket.on("server:update", onServerUpdate);
+    socket.on("server:removed", onServerRemoved);
+    socket.on("event:new", putEvent);
+    socket.on("event:update", putEvent);
+    socket.on("event:delete", onEventDelete);
+    socket.on("event:alert", onEventAlert);
+    socket.on("channel:update", onChannelUpdate);
+    socket.on("channel:delete", onChannelDelete);
+    socket.on("presence", onPresence);
+    socket.on("user:update", onUserUpdate);
+    socket.on("friends:changed", refreshFriends);
     return () => {
       socket.off("connect", onConnect);
       socket.off("message:new", onMessage);
       socket.off("channel:new", onChannel);
       socket.off("member:new", onMember);
       socket.off("voice:state", onVoice);
+      socket.off("member:update", onMemberUpdate);
+      socket.off("member:remove", onMemberRemove);
+      socket.off("server:update", onServerUpdate);
+      socket.off("server:removed", onServerRemoved);
+      socket.off("event:new", putEvent);
+      socket.off("event:update", putEvent);
+      socket.off("event:delete", onEventDelete);
+      socket.off("event:alert", onEventAlert);
+      socket.off("channel:update", onChannelUpdate);
+      socket.off("channel:delete", onChannelDelete);
+      socket.off("presence", onPresence);
+      socket.off("user:update", onUserUpdate);
+      socket.off("friends:changed", refreshFriends);
     };
-  }, [initialMe.id]);
+  }, [initialMe.id, notify, refreshFriends, refreshDms, dropCall]);
 
   // The channel on screen is read; so is the active one again when the tab comes back to the front.
   useEffect(() => {
     activeChannelRef.current = activeChannelId;
     serversRef.current = servers;
+    activeServerRef.current = activeServerId;
+    detailRef.current = detail;
+    connectionRef.current = connection;
+    dmsRef.current = dms;
     const markRead = () => {
       const id = activeChannelRef.current;
       if (id && document.visibilityState === "visible")
@@ -203,7 +402,7 @@ export default function App({
     markRead();
     document.addEventListener("visibilitychange", markRead);
     return () => document.removeEventListener("visibilitychange", markRead);
-  }, [activeChannelId, servers]);
+  }, [activeChannelId, servers, activeServerId, detail, connection, dms]);
 
   const unreadTotal = Object.values(unread).reduce((n, u) => n + u.count, 0);
   useEffect(() => {
@@ -272,12 +471,37 @@ export default function App({
     setConnection(null);
   };
 
+  const openProfile = (userId: string) => setDialog(userId === me.id ? { kind: "profile" } : { kind: "user", userId });
+
   const selectServer = (id: string) => {
     if (id !== activeServerId) {
       setSearch(null);
       setDetail(null);
-      setActiveChannelId(null);
+      setActiveChannelId(id === DM_SCOPE ? (lastChannelByServer.current[DM_SCOPE] ?? dms[0]?.id ?? null) : null);
       setActiveServerId(id);
+    }
+  };
+
+  const selectDm = (dm: DmDTO) => {
+    if (dm.id !== activeChannelId) setSearch(null);
+    setActiveChannelId(dm.id);
+    lastChannelByServer.current[DM_SCOPE] = dm.id;
+    setSidebarOpen(false);
+  };
+
+  const openDm = async (userId: string) => {
+    try {
+      const { dm } = await api<{ dm: DmDTO }>("/api/dms", { body: { userId } });
+      setDms((list) => (list.some((d) => d.id === dm.id) ? list : [dm, ...list]));
+      lastChannelByServer.current[DM_SCOPE] = dm.id;
+      setDialog(null);
+      setSearch(null);
+      setDetail(null);
+      setActiveServerId(DM_SCOPE);
+      setActiveChannelId(dm.id);
+      setSidebarOpen(false);
+    } catch (err) {
+      notify((err as Error).message);
     }
   };
 
@@ -303,7 +527,20 @@ export default function App({
   };
 
   const currentDetail = detail?.server.id === activeServerId ? detail : null;
-  const channel = currentDetail?.channels.find((c) => c.id === activeChannelId) ?? null;
+  const onlineNow = { ...online, [me.id]: true };
+  const canManageChannels = !!currentDetail && can(currentDetail.server.role, "channel:manage");
+  const dmMode = activeServerId === DM_SCOPE;
+  const activeDm = dmMode ? (dms.find((d) => d.id === activeChannelId) ?? null) : null;
+  // A conversation is shown through the same chat view as a text channel.
+  const channel: ChannelDTO | null = activeDm
+    ? { id: activeDm.id, serverId: DM_SCOPE, name: activeDm.peer.name, type: "text", position: 0 }
+    : (currentDetail?.channels.find((c) => c.id === activeChannelId) ?? null);
+  const dmMembers: MemberDTO[] = activeDm
+    ? [
+        { user: me, role: "member", mutedUntil: null },
+        { user: activeDm.peer, role: "member", mutedUntil: null },
+      ]
+    : [];
   const settings: VoiceSettings = { deafened, lowData, setDeafened, setLowData };
   const inVoice = currentDetail?.channels.reduce((n, c) => n + (voiceStates[c.id]?.length ?? 0), 0) ?? 0;
 
@@ -318,185 +555,292 @@ export default function App({
   return (
     <RoomContext.Provider value={room}>
       <RoomAudioRenderer muted={deafened} />
-      <div className="flex h-dvh overflow-hidden bg-ink-950 pt-safe px-safe">
-        <div
-          className={cn(
-            "fixed inset-0 z-20 bg-black/60 backdrop-blur-sm transition-opacity md:hidden",
-            sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0",
-          )}
-          onClick={closeSidebar}
-          {...sidebarSwipe}
-        />
-        <aside
-          {...sidebarSwipe}
-          className={cn(
-            "z-30 flex shrink-0 select-none",
-            "max-md:fixed max-md:inset-y-0 max-md:start-0 max-md:bg-ink-950 max-md:pt-safe max-md:shadow-2xl max-md:transition-[translate,visibility] max-md:duration-200 max-md:ease-out",
-            !sidebarOpen && "max-md:invisible ltr:max-md:-translate-x-full rtl:max-md:translate-x-full",
-          )}
-        >
-          <ServerRail
-            me={me}
-            servers={servers}
-            activeId={activeServerId}
-            unread={serverUnread}
-            onSelect={selectServer}
-            onAdd={() => setDialog({ kind: "server" })}
-            onProfile={() => setDialog({ kind: "profile" })}
+      <WatchProvider onNotify={notify}>
+        <div className="flex h-dvh overflow-hidden bg-ink-950 pt-safe px-safe">
+          <div
+            className={cn(
+              "fixed inset-0 z-20 bg-black/60 backdrop-blur-sm transition-opacity md:hidden",
+              sidebarOpen ? "opacity-100" : "pointer-events-none opacity-0",
+            )}
+            onClick={closeSidebar}
+            {...sidebarSwipe}
           />
-          <ChannelSidebar
-            me={me}
-            detail={currentDetail}
-            activeChannelId={activeChannelId}
-            voiceStates={voiceStates}
-            unread={unread}
-            connection={connection}
-            joiningId={joiningId}
-            settings={settings}
-            onSelect={selectChannel}
-            onAddChannel={(type) => setDialog({ kind: "channel", type })}
-            onLeaveVoice={leaveVoice}
-            onProfile={() => setDialog({ kind: "profile" })}
-            onNotify={notify}
-          />
-        </aside>
+          <aside
+            {...sidebarSwipe}
+            className={cn(
+              "z-30 flex shrink-0 select-none",
+              "max-md:fixed max-md:inset-y-0 max-md:start-0 max-md:bg-ink-950 max-md:pt-safe max-md:shadow-2xl max-md:transition-[translate,visibility] max-md:duration-200 max-md:ease-out",
+              !sidebarOpen && "max-md:invisible ltr:max-md:-translate-x-full rtl:max-md:translate-x-full",
+            )}
+          >
+            <ServerRail
+              me={me}
+              servers={servers}
+              activeId={dmMode ? undefined : activeServerId}
+              unread={serverUnread}
+              onSelect={selectServer}
+              onAdd={() => setDialog({ kind: "server" })}
+              friendRequests={friends?.incoming.length ?? 0}
+              dmActive={dmMode}
+              dmUnread={serverUnread[DM_SCOPE] ?? 0}
+              onDms={() => selectServer(DM_SCOPE)}
+              onFriends={() => setDialog({ kind: "friends" })}
+              onProfile={() => setDialog({ kind: "profile" })}
+            />
+            <ChannelSidebar
+              me={me}
+              dm={
+                dmMode
+                  ? { conversations: dms, activeId: activeChannelId, online: onlineNow, onSelect: selectDm, onNew: () => setDialog({ kind: "friends" }) }
+                  : undefined
+              }
+              detail={currentDetail}
+              activeChannelId={activeChannelId}
+              voiceStates={voiceStates}
+              unread={unread}
+              connection={connection}
+              joiningId={joiningId}
+              settings={settings}
+              onSelect={selectChannel}
+              onAddChannel={(type) => setDialog({ kind: "channel", type })}
+              onEvents={() => setDialog({ kind: "events" })}
+              onLeaveVoice={leaveVoice}
+              onProfile={() => setDialog({ kind: "profile" })}
+              onNotify={notify}
+            />
+          </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col" {...mainSwipe}>
-          <header className="flex h-16 shrink-0 items-center gap-2 border-b border-white/5 bg-ink-900/60 px-2 backdrop-blur select-none md:gap-3 md:px-5">
-            <HeaderButton className="md:hidden" label="منو" onClick={() => setSidebarOpen(true)}>
-              <Menu className="size-5" />
-              {unreadTotal > 0 && <span className="absolute top-1.5 end-1.5 size-2 rounded-full bg-accent" />}
-            </HeaderButton>
+          <main className="flex min-w-0 flex-1 flex-col" {...mainSwipe}>
+            <header className="flex h-16 shrink-0 items-center gap-2 border-b border-white/5 bg-ink-900/60 px-2 backdrop-blur select-none md:gap-3 md:px-5">
+              <HeaderButton className="md:hidden" label="منو" onClick={() => setSidebarOpen(true)}>
+                <Menu className="size-5" />
+                {unreadTotal > 0 && <span className="absolute top-1.5 end-1.5 size-2 rounded-full bg-accent" />}
+              </HeaderButton>
 
-            {search !== null ? (
-              <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-ink-950 px-3 ring-1 ring-accent/50">
-                <Search className="size-4 shrink-0 text-muted" />
-                <input
-                  autoFocus
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onKeyDown={(e) => e.key === "Escape" && setSearch(null)}
-                  placeholder={`جست‌وجو در #${channel?.name ?? ""}`}
-                  className="min-w-0 flex-1 bg-transparent py-2.5 text-sm outline-none placeholder:text-muted/70"
-                />
-                <button onClick={() => setSearch(null)} aria-label="بستن جست‌وجو" className="-me-1 p-1 text-muted hover:text-fg">
-                  <X className="size-4" />
-                </button>
-              </label>
-            ) : (
-              channel &&
-              currentDetail && (
-                <div className="flex min-w-0 flex-1 items-center gap-3">
-                  <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-linear-135 from-accent/25 to-accent-strong/10 text-accent ring-1 ring-accent/20">
-                    {channel.type === "text" ? <Hash className="size-5" /> : <Volume2 className="size-5" />}
-                  </span>
-                  <div className="min-w-0 leading-5">
-                    <h2 className="truncate font-semibold">{channel.name}</h2>
-                    <p className="flex items-center gap-1.5 truncate text-xs text-muted">
-                      {toPersianDigits(currentDetail.members.length)} عضو
-                      <span className="size-1 rounded-full bg-muted/60" />
-                      <span className={inVoice ? "text-online" : undefined}>{toPersianDigits(inVoice)} در گفت‌وگو</span>
-                    </p>
+              {search !== null ? (
+                <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-ink-950 px-3 ring-1 ring-accent/50">
+                  <Search className="size-4 shrink-0 text-muted" />
+                  <input
+                    autoFocus
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => e.key === "Escape" && setSearch(null)}
+                    placeholder={`جست‌وجو در ${activeDm ? "" : "#"}${channel?.name ?? ""}`}
+                    className="min-w-0 flex-1 bg-transparent py-2.5 text-sm outline-none placeholder:text-muted/70"
+                  />
+                  <button onClick={() => setSearch(null)} aria-label="بستن جست‌وجو" className="-me-1 p-1 text-muted hover:text-fg">
+                    <X className="size-4" />
+                  </button>
+                </label>
+              ) : (
+                <>
+                {activeDm && (
+                  <button
+                    onClick={() => openProfile(activeDm.peer.id)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-start"
+                    aria-label={`پروفایل ${activeDm.peer.name}`}
+                  >
+                    <Avatar user={activeDm.peer} online={!!onlineNow[activeDm.peer.id]} />
+                    <span className="min-w-0 leading-5">
+                      <span className="block truncate font-semibold">{activeDm.peer.name}</span>
+                      <span dir="auto" className={cn("block truncate text-xs", onlineNow[activeDm.peer.id] ? "text-online" : "text-muted")}>
+                        {(onlineNow[activeDm.peer.id] && statusLine(activeDm.peer)) || (onlineNow[activeDm.peer.id] ? "آنلاین" : "آفلاین")}
+                      </span>
+                    </span>
+                  </button>
+                )}
+                {channel && currentDetail && (
+                  <div className="flex min-w-0 flex-1 items-center gap-3">
+                    <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-linear-135 from-accent/25 to-accent-strong/10 text-accent ring-1 ring-accent/20">
+                      {channel.type === "text" ? <Hash className="size-5" /> : <Volume2 className="size-5" />}
+                    </span>
+                    <div className="min-w-0 leading-5">
+                      <h2 className="truncate font-semibold">{channel.name}</h2>
+                      <p className="flex items-center gap-1.5 truncate text-xs text-muted">
+                        {toPersianDigits(currentDetail.members.length)} عضو
+                        <span className="size-1 rounded-full bg-muted/60" />
+                        <span className={inVoice ? "text-online" : undefined}>{toPersianDigits(inVoice)} در گفت‌وگو</span>
+                      </p>
+                    </div>
                   </div>
+                )}
+                </>
+              )}
+
+              {(currentDetail || activeDm) && (
+                <div className="ms-auto flex shrink-0 items-center gap-0.5">
+                  {(connection || firstVoice) && channel?.id !== connection?.channelId && search === null && (
+                    <HeaderButton label={connection ? "بازگشت به تماس" : "شروع گفت‌وگوی صوتی"} onClick={startCall}>
+                      <Phone className={cn("size-5", connection && "text-online")} />
+                    </HeaderButton>
+                  )}
+                  {channel?.type === "text" && search === null && (
+                    <HeaderButton label="جست‌وجو در پیام‌ها" onClick={() => setSearch("")}>
+                      <Search className="size-5" />
+                    </HeaderButton>
+                  )}
+                  {channel && canManageChannels && search === null && (
+                    <HeaderButton label="تنظیمات کانال" onClick={() => setDialog({ kind: "editChannel", channelId: channel.id })}>
+                      <Settings className="size-5" />
+                    </HeaderButton>
+                  )}
+                  {currentDetail && (
+                    <HeaderButton
+                      className={cn(!infoHidden && "xl:hidden", "text-accent")}
+                      label="اطلاعات سرور"
+                      onClick={() => {
+                        setInfoHidden(false);
+                        setMembersOpen(true);
+                      }}
+                    >
+                      <PanelLeft className="size-5 ltr:-scale-x-100" />
+                    </HeaderButton>
+                  )}
                 </div>
-              )
+              )}
+            </header>
+
+            {connection && channel?.id !== connection.channelId && (
+              <VoiceBar connection={connection} settings={settings} onOpen={openConnectedChannel} onLeave={leaveVoice} />
             )}
 
-            {currentDetail && (
-              <div className="ms-auto flex shrink-0 items-center gap-0.5">
-                {(connection || firstVoice) && channel?.id !== connection?.channelId && search === null && (
-                  <HeaderButton label={connection ? "بازگشت به تماس" : "شروع گفت‌وگوی صوتی"} onClick={startCall}>
-                    <Phone className={cn("size-5", connection && "text-online")} />
-                  </HeaderButton>
-                )}
-                {channel?.type === "text" && search === null && (
-                  <HeaderButton label="جست‌وجو در پیام‌ها" onClick={() => setSearch("")}>
-                    <Search className="size-5" />
-                  </HeaderButton>
-                )}
-                <HeaderButton
-                  className={cn(!infoHidden && "xl:hidden", "text-accent")}
-                  label="اطلاعات سرور"
-                  onClick={() => {
-                    setInfoHidden(false);
-                    setMembersOpen(true);
-                  }}
-                >
-                  <PanelLeft className="size-5 ltr:-scale-x-100" />
-                </HeaderButton>
-              </div>
-            )}
-          </header>
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              {!servers.length && !dmMode ? (
+                <EmptyState onAdd={() => setDialog({ kind: "server" })} />
+              ) : dmMode && !activeDm ? (
+                <NoConversation onFriends={() => setDialog({ kind: "friends" })} />
+              ) : channel?.type === "text" ? (
+                <ChatView
+                  key={channel.id}
+                  me={me}
+                  channel={channel}
+                  search={search?.trim() ?? ""}
+                  members={currentDetail?.members ?? dmMembers}
+                  online={onlineNow}
+                  dm={activeDm?.peer}
+                  onOpenProfile={openProfile}
+                />
+              ) : channel?.type === "voice" ? (
+                <VoiceView
+                  channel={channel}
+                  participants={voiceStates[channel.id] ?? []}
+                  connection={connection}
+                  joining={joiningId === channel.id}
+                  settings={settings}
+                  onJoin={() => joinVoice(channel)}
+                  onLeave={leaveVoice}
+                />
+              ) : (
+                <div className="bg-glow flex-1" />
+              )}
+            </div>
+          </main>
 
-          {connection && channel?.id !== connection.channelId && (
-            <VoiceBar connection={connection} settings={settings} onOpen={openConnectedChannel} onLeave={leaveVoice} />
+          {currentDetail && (
+            <MembersList
+              me={me}
+              server={currentDetail.server}
+              members={currentDetail.members}
+              channels={currentDetail.channels}
+              voiceStates={voiceStates}
+              online={onlineNow}
+              open={membersOpen}
+              hidden={infoHidden}
+              onClose={hideInfo}
+              onOpenProfile={openProfile}
+              onSettings={() => setDialog({ kind: "serverSettings" })}
+              onNotify={notify}
+            />
           )}
+        </div>
 
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-            {!servers.length ? (
-              <EmptyState onAdd={() => setDialog({ kind: "server" })} />
-            ) : channel?.type === "text" ? (
-              <ChatView key={channel.id} me={me} channel={channel} search={search?.trim() ?? ""} />
-            ) : channel?.type === "voice" ? (
-              <VoiceView
-                channel={channel}
-                participants={voiceStates[channel.id] ?? []}
-                connection={connection}
-                joining={joiningId === channel.id}
-                settings={settings}
-                onJoin={() => joinVoice(channel)}
-                onLeave={leaveVoice}
-              />
-            ) : (
-              <div className="bg-glow flex-1" />
-            )}
-          </div>
-        </main>
-
-        {currentDetail && (
-          <MembersList
-            server={currentDetail.server}
-            members={currentDetail.members}
-            channels={currentDetail.channels}
-            voiceStates={voiceStates}
-            open={membersOpen}
-            hidden={infoHidden}
-            onClose={hideInfo}
+        {dialog?.kind === "server" && <ServerDialog onClose={() => setDialog(null)} onDone={addServer} />}
+        {dialog?.kind === "profile" && (
+          <ProfileDialog
+            me={me}
+            onClose={() => setDialog(null)}
+            onDone={(updated) => {
+              setMe(updated);
+              setDialog(null);
+              notify("پروفایل شما ذخیره شد");
+            }}
+            onMeChange={setMe}
             onNotify={notify}
           />
         )}
-      </div>
+        {dialog?.kind === "serverSettings" && currentDetail && (
+          <ServerSettingsDialog
+            server={currentDetail.server}
+            members={currentDetail.members}
+            meId={me.id}
+            onClose={() => setDialog(null)}
+            onChanged={(d) => {
+              setDetail(d);
+              setServers((list) => list.map((s) => (s.id === d.server.id ? d.server : s)));
+            }}
+            onNotify={notify}
+          />
+        )}
+        {dialog?.kind === "events" && currentDetail && (
+          <EventsDialog
+            server={currentDetail.server}
+            events={currentDetail.events}
+            channels={currentDetail.channels}
+            meId={me.id}
+            onClose={() => setDialog(null)}
+            onJoin={selectChannel}
+            onNotify={notify}
+          />
+        )}
+        {dialog?.kind === "friends" && (
+          <FriendsDialog
+            friends={friends}
+            online={onlineNow}
+            onClose={() => setDialog(null)}
+            onOpenProfile={openProfile}
+            onChanged={refreshFriends}
+            onNotify={notify}
+          />
+        )}
+        {dialog?.kind === "user" && (
+          <ProfileCard
+            key={dialog.userId}
+            userId={dialog.userId}
+            serverId={currentDetail?.server.id}
+            myRole={currentDetail?.server.role}
+            member={currentDetail?.members.find((m) => m.user.id === dialog.userId)}
+            online={!!online[dialog.userId]}
+            onClose={() => setDialog(null)}
+            onNotify={notify}
+            onFriendsChanged={refreshFriends}
+            onMessage={openDm}
+          />
+        )}
+        {dialog?.kind === "editChannel" && currentDetail?.channels.some((c) => c.id === dialog.channelId) && (
+          <EditChannelDialog
+            channel={currentDetail.channels.find((c) => c.id === dialog.channelId)!}
+            onClose={() => setDialog(null)}
+            onNotify={notify}
+          />
+        )}
+        {dialog?.kind === "channel" && currentDetail && (
+          <CreateChannelDialog
+            serverId={currentDetail.server.id}
+            type={dialog.type}
+            onClose={() => setDialog(null)}
+            onDone={(c) => {
+              onChannelCreated(c);
+              setDialog(null);
+            }}
+          />
+        )}
 
-      {dialog?.kind === "server" && <ServerDialog onClose={() => setDialog(null)} onDone={addServer} />}
-      {dialog?.kind === "profile" && (
-        <ProfileDialog
-          me={me}
-          onClose={() => setDialog(null)}
-          onDone={(updated) => {
-            setMe(updated);
-            setDialog(null);
-            notify("نام شما ذخیره شد");
-          }}
-          onNotify={notify}
-        />
-      )}
-      {dialog?.kind === "channel" && currentDetail && (
-        <CreateChannelDialog
-          serverId={currentDetail.server.id}
-          type={dialog.type}
-          onClose={() => setDialog(null)}
-          onDone={(c) => {
-            onChannelCreated(c);
-            setDialog(null);
-          }}
-        />
-      )}
-
-      {toast && (
-        <div className="fixed top-[calc(env(safe-area-inset-top)+4.5rem)] left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl bg-ink-800/95 px-4 py-2.5 text-center text-sm leading-6 shadow-2xl ring-1 ring-white/10 backdrop-blur">
-          {toast}
-        </div>
-      )}
+        {toast && (
+          <div className="fixed top-[calc(env(safe-area-inset-top)+4.5rem)] left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl bg-ink-800/95 px-4 py-2.5 text-center text-sm leading-6 shadow-2xl ring-1 ring-white/10 backdrop-blur">
+            {toast}
+          </div>
+        )}
+      </WatchProvider>
     </RoomContext.Provider>
   );
 
@@ -529,6 +873,26 @@ function HeaderButton({
     >
       {children}
     </button>
+  );
+}
+
+function NoConversation({ onFriends }: { onFriends: () => void }) {
+  return (
+    <div className="bg-glow grid flex-1 place-items-center p-6 text-center">
+      <div className="max-w-sm">
+        <span className="mx-auto grid size-20 place-items-center rounded-3xl bg-accent-strong text-white shadow-2xl shadow-accent-strong/40">
+          <MessageCircle className="size-9" />
+        </span>
+        <h2 className="mt-6 text-xl font-bold">پیام مستقیم</h2>
+        <p className="mt-2 text-sm leading-6 text-muted">با دوستانتان و اعضای سرورهایتان خصوصی گفت‌وگو کنید. روی نام کسی بزنید و «ارسال پیام» را انتخاب کنید.</p>
+        <button
+          onClick={onFriends}
+          className="mt-6 rounded-xl bg-accent-strong px-6 py-3 font-semibold text-white shadow-lg shadow-accent-strong/30 hover:bg-accent"
+        >
+          دوستان من
+        </button>
+      </div>
+    </div>
   );
 }
 

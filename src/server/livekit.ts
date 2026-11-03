@@ -19,7 +19,7 @@ export async function createVoiceToken(channelId: string, user: VoiceParticipant
   const at = new AccessToken(apiKey(), apiSecret(), {
     identity: user.id,
     name: user.name,
-    metadata: JSON.stringify({ color: user.color }),
+    metadata: JSON.stringify({ color: user.color, avatar: user.avatar ?? null }),
     ttl: "6h",
   });
   at.addGrant({
@@ -34,10 +34,13 @@ export async function createVoiceToken(channelId: string, user: VoiceParticipant
 
 function toParticipant(p: ParticipantInfo): VoiceParticipant {
   let color = "#64748b";
+  let avatar: string | null = null;
   try {
-    color = JSON.parse(p.metadata || "{}").color ?? color;
+    const meta = JSON.parse(p.metadata || "{}");
+    color = meta.color ?? color;
+    avatar = typeof meta.avatar === "string" ? meta.avatar : null;
   } catch {}
-  return { id: p.identity, name: p.name || p.identity, color };
+  return { id: p.identity, name: p.name || p.identity, color, avatar };
 }
 
 const serverOfChannel = new Map<string, string>();
@@ -80,4 +83,17 @@ export async function syncVoiceFromLiveKit() {
     if (!people.length) continue;
     realtime.voice.set(channelId, new Map(people.map((p) => [p.identity, toParticipant(p)])));
   }
+}
+
+/** Disconnects everyone still in these channels' rooms, e.g. because the server was deleted. */
+export async function closeVoiceRooms(channelIds: string[]) {
+  if (!channelIds.length) return;
+  const client = new RoomServiceClient(internalUrl(), apiKey(), apiSecret());
+  await Promise.all(
+    channelIds.map((id) =>
+      client.deleteRoom(roomName(id)).catch(() => {
+        // No such room just means nobody was connected.
+      }),
+    ),
+  );
 }

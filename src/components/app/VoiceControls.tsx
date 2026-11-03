@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useLocalParticipant } from "@livekit/components-react";
-import { Gauge, HeadphoneOff, Headphones, Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
+import { AudioPresets, Track } from "livekit-client";
+import { Film, Gauge, HeadphoneOff, Headphones, Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
 import { cn } from "@/lib/format";
 import type { VoiceSettings } from "./App";
+import { useWatch } from "./WatchTogether";
 
 /** Mic and deafen toggles plus error reporting, shared by the full controls and the mobile voice bar. */
 export function useVoiceToggles(settings: VoiceSettings) {
@@ -59,6 +61,47 @@ export default function VoiceControls({
     toggleDeafen,
   } = useVoiceToggles(settings);
   const canShareScreen = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia;
+  const watch = useWatch();
+  const filePicker = useRef<HTMLInputElement>(null);
+  const [shareHint, setShareHint] = useState<string>();
+
+  /**
+   * Shares the screen with its sound. The sound is meant to be a film or a game, not a voice, so the
+   * microphone clean-up (echo cancelling, noise suppression, gain control) is off and the bitrate is music-grade.
+   */
+  const toggleScreenShare = () =>
+    attempt(
+      async () => {
+        if (isScreenShareEnabled) {
+          await localParticipant.setScreenShareEnabled(false);
+          return;
+        }
+        await localParticipant.setScreenShareEnabled(
+          true,
+          {
+            audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+            systemAudio: "include",
+            surfaceSwitching: "include",
+            contentHint: "motion",
+          },
+          { audioPreset: AudioPresets.musicHighQualityStereo, forceStereo: true, dtx: false, red: false },
+        );
+        const withSound = !!localParticipant.getTrackPublication(Track.Source.ScreenShareAudio);
+        setShareHint(
+          withSound
+            ? undefined
+            : "صدا همراه تصویر ارسال نمی‌شود. هنگام انتخاب، گزینهٔ «Share audio» را روشن کنید (برای کل صفحه فقط در Chrome و Edge روی ویندوز؛ برای یک تب در همهٔ سیستم‌ها).",
+        );
+      },
+      "اشتراک صفحه ممکن نشد",
+      true,
+    );
+
+  const pickWatchFile = (file: File | undefined) => {
+    if (filePicker.current) filePicker.current.value = "";
+    if (!file) return;
+    return attempt(async () => (watch.session ? watch.join(file) : await watch.start(file)), "پخش این فایل ممکن نشد");
+  };
 
   const size = compact ? "size-9" : "size-12 sm:size-11";
   const icon = compact ? "size-4" : "size-5";
@@ -97,19 +140,28 @@ export default function VoiceControls({
             {canShareScreen && (
               <ControlButton
                 className={size}
-                label={isScreenShareEnabled ? "توقف اشتراک صفحه" : "اشتراک صفحه"}
+                label={isScreenShareEnabled ? "توقف اشتراک صفحه" : "اشتراک صفحه (با صدا)"}
                 active={isScreenShareEnabled}
-                onClick={() =>
-                  attempt(
-                    () => localParticipant.setScreenShareEnabled(!isScreenShareEnabled, { audio: true }),
-                    "اشتراک صفحه ممکن نشد",
-                    true,
-                  )
-                }
+                onClick={toggleScreenShare}
               >
                 <MonitorUp className={icon} />
               </ControlButton>
             )}
+            <input ref={filePicker} type="file" accept="video/*" className="sr-only" tabIndex={-1} onChange={(e) => pickWatchFile(e.target.files?.[0])} />
+            <ControlButton
+              className={size}
+              label={
+                !watch.session
+                  ? "تماشای هم‌زمان فیلم"
+                  : watch.local
+                    ? "پایان تماشای هم‌زمان"
+                    : "انتخاب فایل برای تماشای هم‌زمان"
+              }
+              active={!!watch.local}
+              onClick={() => (watch.local ? watch.stop() : filePicker.current?.click())}
+            >
+              <Film className={icon} />
+            </ControlButton>
             <ControlButton
               className={size}
               label={settings.lowData ? "خاموش کردن حالت کم‌مصرف" : "حالت کم‌مصرف: فقط صدا دریافت شود"}
@@ -133,6 +185,7 @@ export default function VoiceControls({
         </ControlButton>
       </div>
       {error && <p className="px-1 text-center text-xs text-danger">{error}</p>}
+      {shareHint && isScreenShareEnabled && !error && <p className="max-w-sm px-1 text-center text-xs leading-5 text-amber-300">{shareHint}</p>}
     </div>
   );
 }

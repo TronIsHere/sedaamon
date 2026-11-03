@@ -2,18 +2,32 @@
 
 import { useState } from "react";
 import { useParticipants } from "@livekit/components-react";
-import { ChevronDown, Hash, Link2, Loader2, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
+import { CalendarClock, ChevronDown, Hash, Link2, Loader2, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
+import { can } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
-import type { ChannelDTO, ChannelType, MeDTO, ServerDetailDTO, VoiceStates } from "@/lib/types";
+import { statusLine } from "@/lib/status";
+import { formatAgo } from "@/lib/format";
+import type { ChannelDTO, ChannelType, DmDTO, MeDTO, ServerDetailDTO, VoiceStates } from "@/lib/types";
+import { formatEventWhen, isRunning, useNow } from "./EventsDialog";
 import type { Unread, VoiceConnection, VoiceSettings } from "./App";
 import Avatar from "./Avatar";
 import { Badge } from "./ServerRail";
 import VoiceControls from "./VoiceControls";
 
+/** What the sidebar shows instead of channels while the direct messages are open. */
+export interface DmSidebarProps {
+  conversations: DmDTO[];
+  activeId: string | null;
+  online: Record<string, boolean>;
+  onSelect: (dm: DmDTO) => void;
+  onNew: () => void;
+}
+
 export default function ChannelSidebar({
   me,
+  dm,
   detail,
   activeChannelId,
   voiceStates,
@@ -23,11 +37,13 @@ export default function ChannelSidebar({
   settings,
   onSelect,
   onAddChannel,
+  onEvents,
   onLeaveVoice,
   onProfile,
   onNotify,
 }: {
   me: MeDTO;
+  dm?: DmSidebarProps;
   detail: ServerDetailDTO | null;
   activeChannelId: string | null;
   voiceStates: VoiceStates;
@@ -37,6 +53,7 @@ export default function ChannelSidebar({
   settings: VoiceSettings;
   onSelect: (c: ChannelDTO) => void;
   onAddChannel: (type: ChannelType) => void;
+  onEvents: () => void;
   onLeaveVoice: () => void;
   onProfile: () => void;
   onNotify: (message: string) => void;
@@ -48,8 +65,9 @@ export default function ChannelSidebar({
   const [query, setQuery] = useState("");
   const q = query.trim().toLowerCase();
   const matches = (c: ChannelDTO) => !q || c.name.toLowerCase().includes(q);
+  const dmMatches = (d: DmDTO) => !q || d.peer.name.toLowerCase().includes(q);
 
-  const isOwner = detail?.server.role === "owner";
+  const canManage = !!detail && can(detail.server.role, "channel:manage");
   const text = detail?.channels.filter((c) => c.type === "text" && matches(c)) ?? [];
   const voice = detail?.channels.filter((c) => c.type === "voice" && matches(c)) ?? [];
   const newCount = detail
@@ -59,11 +77,21 @@ export default function ChannelSidebar({
   return (
     <div className="flex w-[17rem] flex-col border-e border-white/5 bg-ink-900 max-md:w-[calc(100vw-72px-3rem)] max-md:max-w-[17rem]">
       <div className="flex h-16 shrink-0 items-center gap-2 px-4">
-        <h1 className="truncate text-lg font-bold">{detail?.server.name ?? "صدامون"}</h1>
-        {newCount > 0 && (
+        <h1 className="truncate text-lg font-bold">{dm ? "پیام‌های مستقیم" : (detail?.server.name ?? "صدامون")}</h1>
+        {!dm && newCount > 0 && (
           <span className="shrink-0 text-xs font-semibold text-accent">{toPersianDigits(newCount)} جدید</span>
         )}
-        {detail && (
+        {dm && (
+          <button
+            onClick={dm.onNew}
+            title="پیام تازه"
+            aria-label="پیام تازه"
+            className="ms-auto rounded-lg p-2 text-accent hover:bg-ink-800 active:bg-ink-800 md:p-1.5"
+          >
+            <MessageSquarePlus className="size-[18px]" />
+          </button>
+        )}
+        {!dm && detail && (
           <button
             onClick={() => shareInvite(detail.server, onNotify)}
             title="لینک دعوت"
@@ -75,12 +103,14 @@ export default function ChannelSidebar({
         )}
       </div>
 
+      {!dm && detail && <EventsEntry detail={detail} onClick={onEvents} />}
+
       <div className="px-3 pb-2">
         <label className="flex items-center gap-2 rounded-xl bg-ink-950 px-3 ring-1 ring-white/5 transition focus-within:ring-accent/60">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="جست‌وجوی کانال…"
+            placeholder={dm ? "جست‌وجوی گفت‌وگو…" : "جست‌وجوی کانال…"}
             className="min-w-0 flex-1 bg-transparent py-2.5 text-sm outline-none placeholder:text-muted/70"
           />
           <Search className="size-4 shrink-0 text-muted" />
@@ -88,11 +118,13 @@ export default function ChannelSidebar({
       </div>
 
       <div className="scrollbar-thin flex-1 space-y-5 overflow-y-auto px-3 py-3">
-        {!detail ? (
+        {dm ? (
+          <DmList dm={dm} conversations={dm.conversations.filter(dmMatches)} unread={unread} searching={!!q} />
+        ) : !detail ? (
           <SidebarSkeleton />
         ) : (
           <>
-            <Section title="کانال‌های متنی" canAdd={isOwner} onAdd={() => onAddChannel("text")}>
+            <Section title="کانال‌های متنی" canAdd={canManage} onAdd={() => onAddChannel("text")}>
               {text.map((c) => {
                 const count = c.id === activeChannelId ? 0 : (unread[c.id]?.count ?? 0);
                 return (
@@ -105,7 +137,7 @@ export default function ChannelSidebar({
               })}
             </Section>
 
-            <Section title="کانال‌های صوتی" canAdd={isOwner} onAdd={() => onAddChannel("voice")}>
+            <Section title="کانال‌های صوتی" canAdd={canManage} onAdd={() => onAddChannel("voice")}>
               {voice.map((c) => {
                 const connectedHere = connection?.channelId === c.id;
                 const people = voiceStates[c.id] ?? [];
@@ -168,17 +200,97 @@ export default function ChannelSidebar({
         onClick={onProfile}
         className="group flex items-center gap-3 border-t border-white/5 px-4 pt-3 pb-safe-4 text-start hover:bg-ink-850"
       >
-        <span className="relative">
-          <Avatar user={me} />
-          <span className="absolute -end-0.5 -bottom-0.5 size-3 rounded-full bg-online ring-2 ring-ink-900" />
-        </span>
+        <Avatar user={me} online />
         <span className="min-w-0 flex-1 text-sm leading-5">
           <span className="block truncate font-semibold">{me.name}</span>
-          <span className="block truncate text-xs text-muted">حساب کاربری</span>
+          <span dir="auto" className="block truncate text-xs text-muted">
+            {statusLine(me) || "حساب کاربری"}
+          </span>
         </span>
         <Settings className="size-4 shrink-0 text-muted transition group-hover:rotate-45 group-hover:text-fg" />
       </button>
     </div>
+  );
+}
+
+/** One line under the server name: the next event, or an invitation to schedule the first. Hidden when there is nothing to show. */
+function EventsEntry({ detail, onClick }: { detail: ServerDetailDTO; onClick: () => void }) {
+  const now = useNow();
+  const next = detail.events.find((e) => isRunning(e, now) || new Date(e.startsAt).getTime() > now);
+  if (!next && !can(detail.server.role, "event:manage")) return null;
+  const running = !!next && isRunning(next, now);
+  return (
+    <div className="px-3 pb-2">
+      <button
+        onClick={onClick}
+        className={cn(
+          "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-start text-sm ring-1 transition hover:bg-ink-850",
+          running ? "bg-online/10 ring-online/30" : "bg-ink-950 ring-white/5",
+        )}
+      >
+        <CalendarClock className={cn("size-4 shrink-0", running ? "text-online" : "text-accent")} />
+        <span className="min-w-0 flex-1 leading-5">
+          <span className="block truncate font-semibold">{next ? next.title : "رویدادها"}</span>
+          <span className={cn("block truncate text-xs", running ? "text-online" : "text-muted")}>
+            {next ? (running ? "در حال برگزاری" : formatEventWhen(next.startsAt)) : "اولین رویداد را زمان‌بندی کنید"}
+          </span>
+        </span>
+        {detail.events.length > 1 && <span className="text-xs text-muted">+{toPersianDigits(detail.events.length - 1)}</span>}
+      </button>
+    </div>
+  );
+}
+
+function DmList({
+  dm,
+  conversations,
+  unread,
+  searching,
+}: {
+  dm: DmSidebarProps;
+  conversations: DmDTO[];
+  unread: Unread;
+  searching: boolean;
+}) {
+  if (!conversations.length) {
+    return (
+      <div className="px-2 py-10 text-center text-sm leading-7 text-muted">
+        {searching ? (
+          "گفت‌وگویی پیدا نشد"
+        ) : (
+          <>
+            هنوز گفت‌وگویی ندارید.
+            <br />
+            روی نام یکی از اعضا یا دوستانتان بزنید و «ارسال پیام» را انتخاب کنید.
+          </>
+        )}
+      </div>
+    );
+  }
+  return (
+    <ul className="space-y-0.5">
+      {conversations.map((c) => {
+        const count = c.id === dm.activeId ? 0 : (unread[c.id]?.count ?? 0);
+        const online = !!dm.online[c.peer.id];
+        const line = (online && statusLine(c.peer)) || (c.lastMessageAt ? formatAgo(c.lastMessageAt) : "");
+        return (
+          <li key={c.id}>
+            <ChannelButton active={c.id === dm.activeId} onClick={() => dm.onSelect(c)}>
+              <Avatar user={c.peer} online={online} />
+              <span className="min-w-0 flex-1 leading-5">
+                <span className={cn("block truncate", count > 0 && "font-semibold text-fg")}>{c.peer.name}</span>
+                {line && (
+                  <span dir="auto" className="block truncate text-xs text-muted">
+                    {line}
+                  </span>
+                )}
+              </span>
+              {count > 0 && <Badge count={count} className="ms-auto" />}
+            </ChannelButton>
+          </li>
+        );
+      })}
+    </ul>
   );
 }
 

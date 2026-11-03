@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   /* config options here */
+  allowedDevOrigins: ["127.0.0.1", "172.20.10.5"], // TEMP-VERIFY
   cacheComponents: true,
   partialPrefetching: true,
   async headers() {

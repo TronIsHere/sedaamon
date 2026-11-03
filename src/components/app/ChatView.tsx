@@ -1,14 +1,28 @@
 "use client";
 
-import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
-import { SearchX, SendHorizontal } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { BellOff, CornerUpLeft, SearchX, SendHorizontal, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn, formatDay, formatTime, sameDay } from "@/lib/format";
+import { cn, formatDateTime, formatDay, sameDay } from "@/lib/format";
 import { isTouchDevice } from "@/lib/mobile";
+import { can, isMuted, msUntil, outranks } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { getSocket } from "@/lib/socket";
-import type { ChannelDTO, MeDTO, MessageDTO, TypingEvent, UserDTO } from "@/lib/types";
+import type {
+  ChannelDTO,
+  LiveMessageDTO,
+  MeDTO,
+  MemberDTO,
+  MessageDeletedEvent,
+  MessageDTO,
+  ReactionsEvent,
+  Role,
+  TypingEvent,
+  UserDTO,
+} from "@/lib/types";
 import Avatar from "./Avatar";
+import { Modal } from "./Dialogs";
+import MessageItem, { type MessageActions } from "./MessageItem";
 
 const GROUP_WINDOW_MS = 5 * 60_000;
 /** How often we tell others we're typing, and how long their indicator lasts without a new signal. */
@@ -20,15 +34,53 @@ function addUnique(list: MessageDTO[], incoming: MessageDTO[]) {
   return [...list, ...incoming.filter((m) => !seen.has(m.id))];
 }
 
-export default function ChatView({ me, channel, search }: { me: MeDTO; channel: ChannelDTO; search: string }) {
+const REPLY_PREVIEW_LENGTH = 120;
+
+export default function ChatView({
+  me,
+  channel,
+  search,
+  members,
+  online,
+  dm,
+  onOpenProfile,
+}: {
+  me: MeDTO;
+  channel: ChannelDTO;
+  /** The other person, when this is a direct conversation. */
+  dm?: UserDTO;
+  search: string;
+  members: MemberDTO[];
+  online: Record<string, boolean>;
+  onOpenProfile: (userId: string) => void;
+}) {
   const [messages, setMessages] = useState<MessageDTO[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(true);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>();
   const [typing, setTyping] = useState<Record<string, { user: UserDTO; until: number }>>({});
+  const [replyTo, setReplyTo] = useState<MessageDTO | null>(null);
+  const [selected, setSelected] = useState<{ id: string; picking: boolean } | null>(null);
+  const [deleting, setDeleting] = useState<MessageDTO | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const [, expireMute] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastTypingSent = useRef(0);
+
+  const memberById = useMemo(() => new Map(members.map((m) => [m.user.id, m])), [members]);
+  const myMember = memberById.get(me.id);
+  const myRole: Role = myMember?.role ?? "member";
+  const muted = isMuted(myMember?.mutedUntil);
+
+  // The composer unlocks by itself when the mute runs out.
+  useEffect(() => {
+    if (!myMember?.mutedUntil) return;
+    const left = msUntil(myMember.mutedUntil);
+    if (left <= 0) return;
+    const timer = window.setTimeout(() => expireMute((n) => n + 1), Math.min(left + 250, 2 ** 31 - 1));
+    return () => window.clearTimeout(timer);
+  }, [myMember?.mutedUntil]);
 
   useEffect(() => {
     let cancelled = false;
@@ -52,15 +104,64 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
         return rest;
       });
     };
+    const onEdit = (m: LiveMessageDTO) => {
+      if (m.channelId !== channel.id) return;
+      setMessages((list) =>
+        list.map((x) => {
+          if (x.id === m.id) return m;
+          // Replies quote the original, so keep their preview in step.
+          return x.replyTo?.id === m.id && !x.replyTo.deleted
+            ? { ...x, replyTo: { ...x.replyTo, content: m.content.slice(0, REPLY_PREVIEW_LENGTH) } }
+            : x;
+        }),
+      );
+      setReplyTo((r) => (r?.id === m.id ? m : r));
+    };
+    const onDelete = ({ channelId, messageId }: MessageDeletedEvent) => {
+      if (channelId !== channel.id) return;
+      setMessages((list) =>
+        list
+          .filter((x) => x.id !== messageId)
+          .map((x) =>
+            x.replyTo?.id === messageId ? { ...x, replyTo: { id: messageId, deleted: true, content: "", author: null } } : x,
+          ),
+      );
+      setReplyTo((r) => (r?.id === messageId ? null : r));
+      setSelected((sel) => (sel?.id === messageId ? null : sel));
+    };
+    const onReactions = ({ channelId, messageId, reactions }: ReactionsEvent) => {
+      if (channelId !== channel.id) return;
+      setMessages((list) => list.map((x) => (x.id === messageId ? { ...x, reactions } : x)));
+    };
     const onTyping = ({ channelId, user }: TypingEvent) => {
       if (channelId === channel.id && user.id !== me.id)
         setTyping((t) => ({ ...t, [user.id]: { user, until: Date.now() + TYPING_SHOW_MS } }));
     };
+    // Replies and authors quote people as they were; refresh them when a name or picture changes.
+    const onUserUpdate = (u: UserDTO) => {
+      setMessages((list) =>
+        list.some((x) => x.author.id === u.id || x.replyTo?.author?.id === u.id)
+          ? list.map((x) => ({
+              ...x,
+              author: x.author.id === u.id ? u : x.author,
+              replyTo: x.replyTo?.author?.id === u.id ? { ...x.replyTo, author: u } : x.replyTo,
+            }))
+          : list,
+      );
+    };
+    socket.on("user:update", onUserUpdate);
     socket.on("message:new", onMessage);
+    socket.on("message:edit", onEdit);
+    socket.on("message:delete", onDelete);
+    socket.on("message:reactions", onReactions);
     socket.on("typing", onTyping);
     return () => {
       cancelled = true;
+      socket.off("user:update", onUserUpdate);
       socket.off("message:new", onMessage);
+      socket.off("message:edit", onEdit);
+      socket.off("message:delete", onDelete);
+      socket.off("message:reactions", onReactions);
       socket.off("typing", onTyping);
     };
   }, [channel.id, me.id]);
@@ -98,16 +199,22 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
   const send = async () => {
     const content = draft.trim();
     if (!content) return;
+    if (muted) return;
     setError(undefined);
     lastTypingSent.current = 0;
+    const replying = replyTo;
     // Clear right away so the user can keep typing; put the text back if sending fails.
     setDraft("");
+    setReplyTo(null);
     try {
-      const res = await api<{ message: MessageDTO }>(`/api/channels/${channel.id}/messages`, { body: { content } });
+      const res = await api<{ message: MessageDTO }>(`/api/channels/${channel.id}/messages`, {
+        body: { content, replyTo: replying?.id },
+      });
       setMessages((list) => addUnique(list, [res.message]));
     } catch (err) {
       setError((err as Error).message);
       setDraft((current) => current || content);
+      setReplyTo((current) => current ?? replying);
     } finally {
       inputRef.current?.focus();
     }
@@ -115,7 +222,7 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
 
   const onDraftChange = (value: string) => {
     setDraft(value);
-    if (value.trim() && Date.now() - lastTypingSent.current > TYPING_SEND_MS) {
+    if (value.trim() && !muted && Date.now() - lastTypingSent.current > TYPING_SEND_MS) {
       lastTypingSent.current = Date.now();
       getSocket().emit("typing", { serverId: channel.serverId, channelId: channel.id });
     }
@@ -128,6 +235,54 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
       send();
     }
   };
+
+  const actions: MessageActions = {
+    onOpenProfile,
+    onReply: (m) => {
+      setReplyTo(m);
+      inputRef.current?.focus();
+    },
+    onSaveEdit: async (m, content) => {
+      const res = await api<{ message: MessageDTO }>(`/api/channels/${channel.id}/messages/${m.id}`, {
+        method: "PATCH",
+        body: { content },
+      });
+      setMessages((list) => list.map((x) => (x.id === m.id ? res.message : x)));
+    },
+    onDelete: setDeleting,
+    onReact: (m, emoji) => {
+      // The socket event updates everyone, including this tab; the response covers a slow socket.
+      api<{ reactions: MessageDTO["reactions"] }>(`/api/channels/${channel.id}/messages/${m.id}/reactions`, {
+        method: "PUT",
+        body: { emoji },
+      })
+        .then((res) => setMessages((list) => list.map((x) => (x.id === m.id ? { ...x, reactions: res.reactions } : x))))
+        .catch((err) => setError(err.message));
+    },
+    onJump: (id) => {
+      const el = document.getElementById(`msg-${id}`);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      setFlashId(id);
+      window.setTimeout(() => setFlashId((current) => (current === id ? null : current)), 1400);
+    },
+    onSelect: (id, picking = false) => setSelected(id ? { id, picking } : null),
+  };
+
+  const confirmDelete = async () => {
+    const target = deleting;
+    if (!target) return;
+    setDeleting(null);
+    try {
+      await api(`/api/channels/${channel.id}/messages/${target.id}`, { method: "DELETE" });
+      // The broadcast also removes it, but don't wait for it.
+      setMessages((list) => list.filter((x) => x.id !== target.id));
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+
+  const nameOf = (userId: string) => (userId === me.id ? "شما" : (memberById.get(userId)?.user.name ?? "عضو سابق"));
 
   const q = search.toLowerCase();
   const shown = q ? messages.filter((m) => m.content.toLowerCase().includes(q)) : messages;
@@ -157,10 +312,16 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
           {loading && !messages.length && <MessagesSkeleton />}
           {!loading && !messages.length && (
             <div className="py-16 text-center">
-              <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-accent-strong/15 text-3xl font-bold text-accent ring-1 ring-accent/20">
-                #
-              </span>
-              <h3 className="mt-4 text-xl font-bold">به #{channel.name} خوش آمدید</h3>
+              {dm ? (
+                <span className="mx-auto inline-block rounded-full ring-4 ring-accent/20">
+                  <Avatar user={dm} size="lg" />
+                </span>
+              ) : (
+                <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-accent-strong/15 text-3xl font-bold text-accent ring-1 ring-accent/20">
+                  #
+                </span>
+              )}
+              <h3 className="mt-4 text-xl font-bold">{dm ? `گفت‌وگو با ${dm.name}` : `به #${channel.name} خوش آمدید`}</h3>
               <p className="mt-1 text-sm text-muted">هنوز پیامی نیست. اولین پیام را بفرستید.</p>
             </div>
           )}
@@ -179,6 +340,7 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
               prev.author.id === m.author.id &&
               new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_WINDOW_MS;
             const mine = m.author.id === me.id;
+            const authorRole = memberById.get(m.author.id)?.role;
             return (
               <div key={m.id}>
                 {newDay && (
@@ -188,36 +350,22 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
                     </span>
                   </div>
                 )}
-                <div className={cn("group flex gap-3", mine && "flex-row-reverse", grouped ? "mt-1" : "mt-5")}>
-                  <div className="w-9 shrink-0">{!grouped && <Avatar user={m.author} />}</div>
-                  <div className={cn("flex min-w-0 max-w-[min(34rem,80%)] flex-col", mine ? "items-end" : "items-start")}>
-                    {!grouped && (
-                      <div className={cn("mb-1.5 flex items-baseline gap-3 px-1", mine && "flex-row-reverse")}>
-                        <span className="text-sm font-semibold">{mine ? "شما" : m.author.name}</span>
-                        <span className="text-[11px] text-muted">{formatTime(m.createdAt)}</span>
-                      </div>
-                    )}
-                    <div className={cn("flex items-end gap-2", mine && "flex-row-reverse")}>
-                      <p
-                        dir="auto"
-                        className={cn(
-                          "rounded-2xl px-4 py-2.5 text-sm leading-7 whitespace-pre-wrap break-words",
-                          mine
-                            ? "bg-accent-strong text-white shadow-lg shadow-accent-strong/20"
-                            : "bg-ink-850 text-fg ring-1 ring-white/5",
-                          !grouped && (mine ? "rounded-se-md" : "rounded-ss-md"),
-                        )}
-                      >
-                        <RichText text={m.content} mine={mine} highlight={q} />
-                      </p>
-                      {grouped && (
-                        <span className="mb-1 shrink-0 text-[10px] text-muted opacity-0 transition group-hover:opacity-100">
-                          {formatTime(m.createdAt)}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
+                <MessageItem
+                  message={m}
+                  grouped={grouped}
+                  mine={mine}
+                  myId={me.id}
+                  highlight={q}
+                  authorRole={authorRole}
+                  authorOnline={memberById.has(m.author.id) ? !!online[m.author.id] : undefined}
+                  canWrite={!muted}
+                  canDelete={mine || (can(myRole, "message:delete_any") && outranks(myRole, authorRole ?? "member"))}
+                  selected={selected?.id === m.id}
+                  picking={selected?.id === m.id && selected.picking}
+                  flash={flashId === m.id}
+                  nameOf={nameOf}
+                  actions={actions}
+                />
               </div>
             );
           })}
@@ -232,6 +380,27 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
           </div>
           <div className="min-w-0 flex-1">
             {error && <p className="mb-2 text-sm text-danger">{error}</p>}
+            {muted && myMember?.mutedUntil ? (
+              <div className="flex items-center gap-3 rounded-2xl bg-amber-400/10 px-4 py-3 text-sm text-amber-200 ring-1 ring-amber-400/20">
+                <BellOff className="size-4 shrink-0" />
+                <span>شما تا {formatDateTime(myMember.mutedUntil)} بی‌صدا شده‌اید و نمی‌توانید پیام بفرستید.</span>
+              </div>
+            ) : (
+            <>
+            {replyTo && (
+              <div className="mb-1.5 flex items-center gap-2 rounded-xl bg-ink-850 px-3 py-2 text-xs ring-1 ring-white/5">
+                <CornerUpLeft className="size-3.5 shrink-0 text-accent ltr:-scale-x-100" />
+                <span className="min-w-0 flex-1 truncate">
+                  پاسخ به <span className="font-semibold">{replyTo.author.id === me.id ? "خودتان" : replyTo.author.name}</span>
+                  <span dir="auto" className="ms-2 text-muted">
+                    {replyTo.content}
+                  </span>
+                </span>
+                <button onClick={() => setReplyTo(null)} aria-label="لغو پاسخ" className="p-1 text-muted hover:text-fg">
+                  <X className="size-4" />
+                </button>
+              </div>
+            )}
             <div className="flex items-end gap-2 rounded-2xl bg-ink-850 py-1.5 ps-4 pe-1.5 ring-1 ring-white/5 transition focus-within:ring-accent/50">
               <textarea
                 ref={inputRef}
@@ -241,7 +410,7 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
                 maxLength={2000}
                 onChange={(e) => onDraftChange(e.target.value)}
                 onKeyDown={onKeyDown}
-                placeholder={`پیام به #${channel.name}`}
+                placeholder={dm ? `پیام به ${dm.name}` : `پیام به #${channel.name}`}
                 className="field-sizing-content max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm leading-7 outline-none placeholder:text-muted/70"
               />
               <button
@@ -253,9 +422,28 @@ export default function ChatView({ me, channel, search }: { me: MeDTO; channel: 
                 <SendHorizontal className="size-5 -scale-x-100" />
               </button>
             </div>
+            </>
+            )}
           </div>
         </div>
       </div>
+
+      {deleting && (
+        <Modal title="حذف پیام" onClose={() => setDeleting(null)}>
+          <p className="mb-3 text-sm text-muted">این پیام برای همه حذف می‌شود و برگشتی ندارد.</p>
+          <p dir="auto" className="mb-5 line-clamp-4 rounded-xl bg-ink-950 px-4 py-3 text-sm leading-7 break-words ring-1 ring-white/5">
+            {deleting.content}
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={confirmDelete} className="rounded-xl bg-danger px-4 py-2.5 font-semibold text-white hover:bg-danger/90">
+              حذف
+            </button>
+            <button onClick={() => setDeleting(null)} className="rounded-xl bg-ink-800 px-4 py-2.5 text-muted hover:text-fg">
+              انصراف
+            </button>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -284,51 +472,6 @@ function TypingLine({ users }: { users: UserDTO[] }) {
       )}
     </div>
   );
-}
-
-const TOKEN = /(https?:\/\/[^\s]+|@[^\s@]+)/g;
-
-/** Message text with clickable links, highlighted @mentions and search matches. */
-function RichText({ text, mine, highlight }: { text: string; mine: boolean; highlight: string }) {
-  return text.split(TOKEN).map((part, i) => {
-    if (i % 2 === 0) return <Fragment key={i}>{mark(part, highlight)}</Fragment>;
-    if (part.startsWith("@"))
-      return (
-        <span key={i} className={cn("rounded px-0.5 font-semibold", mine ? "bg-white/15" : "bg-accent/15 text-accent")}>
-          {mark(part, highlight)}
-        </span>
-      );
-    return (
-      <a
-        key={i}
-        href={part}
-        target="_blank"
-        rel="noopener noreferrer"
-        dir="ltr"
-        className={cn("break-all underline underline-offset-2", mine ? "text-white" : "text-accent")}
-      >
-        {mark(part, highlight)}
-      </a>
-    );
-  });
-}
-
-function mark(text: string, q: string): ReactNode {
-  if (!q) return text;
-  const out: ReactNode[] = [];
-  const lower = text.toLowerCase();
-  let from = 0;
-  for (let at = lower.indexOf(q); at !== -1; at = lower.indexOf(q, from)) {
-    out.push(text.slice(from, at));
-    out.push(
-      <mark key={at} className="rounded bg-amber-300/80 px-0.5 text-ink-950">
-        {text.slice(at, at + q.length)}
-      </mark>,
-    );
-    from = at + q.length;
-  }
-  out.push(text.slice(from));
-  return out;
 }
 
 function MessagesSkeleton() {

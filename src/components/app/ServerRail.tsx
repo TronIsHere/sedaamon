@@ -1,4 +1,4 @@
-import { AudioLines, Plus } from "lucide-react";
+import { AudioLines, MessageCircle, Plus, Users } from "lucide-react";
 import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
 import type { MeDTO, ServerDTO } from "@/lib/types";
@@ -11,6 +11,11 @@ export default function ServerRail({
   unread,
   onSelect,
   onAdd,
+  friendRequests,
+  dmActive,
+  dmUnread,
+  onDms,
+  onFriends,
   onProfile,
 }: {
   me: MeDTO;
@@ -20,6 +25,13 @@ export default function ServerRail({
   unread: Record<string, number>;
   onSelect: (id: string) => void;
   onAdd: () => void;
+  /** Friend requests waiting for an answer. */
+  friendRequests: number;
+  /** Direct messages are open instead of a server. */
+  dmActive: boolean;
+  dmUnread: number;
+  onDms: () => void;
+  onFriends: () => void;
   onProfile: () => void;
 }) {
   return (
@@ -36,7 +48,31 @@ export default function ServerRail({
         <Avatar user={me} size="md" />
       </button>
 
-      <p className="mt-6 mb-2 shrink-0 text-[10px] font-semibold tracking-wide text-muted">سرورها</p>
+      <button
+        onClick={onDms}
+        title="پیام‌های مستقیم"
+        aria-label="پیام‌های مستقیم"
+        aria-pressed={dmActive}
+        className={cn(
+          "relative mt-3 grid size-11 shrink-0 place-items-center rounded-xl ring-1 transition",
+          dmActive ? "bg-accent-strong text-white ring-accent/40" : "bg-ink-850 text-muted ring-white/5 hover:bg-ink-700 hover:text-fg",
+        )}
+      >
+        <MessageCircle className="size-5" />
+        {dmUnread > 0 && !dmActive && <Badge count={dmUnread} className="absolute -end-1.5 -top-1.5 ring-2 ring-ink-950" />}
+      </button>
+
+      <button
+        onClick={onFriends}
+        title="دوستان"
+        aria-label="دوستان"
+        className="relative mt-3 grid size-11 shrink-0 place-items-center rounded-xl bg-ink-850 text-muted ring-1 ring-white/5 transition hover:bg-ink-700 hover:text-fg"
+      >
+        <Users className="size-5" />
+        {friendRequests > 0 && <Badge count={friendRequests} className="absolute -end-1.5 -top-1.5 ring-2 ring-ink-950" />}
+      </button>
+
+      <p className="mt-5 mb-2 shrink-0 text-[10px] font-semibold tracking-wide text-muted">سرورها</p>
       <div className="scrollbar-none flex w-full flex-1 flex-col items-center gap-3 overflow-y-auto py-1">
         {servers.map((s) => {
           const active = s.id === activeId;

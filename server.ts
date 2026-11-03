@@ -13,10 +13,15 @@ const hostname = process.env.HOST ?? "0.0.0.0";
 async function main() {
   // Imported after the env is loaded so they see MONGODB_URI, LIVEKIT_* etc.
   const { connectDB } = await import("./src/server/db");
-  const { Member } = await import("./src/server/models");
+  const { Conversation, Member } = await import("./src/server/models");
+  const { toUser } = await import("./src/server/serialize");
+  const { DM_SCOPE } = await import("./src/lib/types");
+  const { isValidObjectId } = await import("mongoose");
   const { userFromToken, SESSION_COOKIE } = await import("./src/server/session");
   const { realtime, serverRoom, userRoom } = await import("./src/server/realtime");
   const { syncVoiceFromLiveKit } = await import("./src/server/livekit");
+  const { userConnected, userDisconnected } = await import("./src/server/presence");
+  const { startEventScheduler } = await import("./src/server/events");
 
   await connectDB();
 
@@ -40,19 +45,33 @@ async function main() {
     const user = await userFromToken(token).catch(() => null);
     if (!user) return nextFn(new Error("unauthorized"));
     socket.data.userId = String(user._id);
-    socket.data.user = { id: String(user._id), name: user.name ?? "", color: user.color };
+    socket.data.user = toUser(user);
     nextFn();
   });
 
   io.on("connection", async (socket) => {
     const userId: string = socket.data.userId;
+    // The socket can close while we look up its rooms; only count it as online if it is still open afterwards.
+    let counted = false;
+    socket.on("disconnect", () => counted && userDisconnected(userId));
     const memberships = await Member.find({ user: userId }, { server: 1 }).lean();
     socket.join([userRoom(userId), ...memberships.map((m) => serverRoom(String(m.server)))]);
+    if (socket.disconnected) return;
+    counted = true;
+    userConnected(userId);
 
     // "Someone is typing…": relayed to the rest of the server, only for servers this socket belongs to.
-    socket.on("typing", (payload: { serverId?: unknown; channelId?: unknown }) => {
+    socket.on("typing", async (payload: { serverId?: unknown; channelId?: unknown }) => {
       const { serverId, channelId } = payload ?? {};
       if (typeof serverId !== "string" || typeof channelId !== "string") return;
+      if (serverId === DM_SCOPE) {
+        // Direct conversations go to the other person only, and only if the sender is part of it.
+        if (!isValidObjectId(channelId)) return;
+        const dm = await Conversation.findOne({ _id: channelId, participants: userId }, { participants: 1 }).lean().catch(() => null);
+        const others = dm?.participants.map(String).filter((p) => p !== userId) ?? [];
+        if (others.length) socket.to(others.map(userRoom)).emit("typing", { channelId, user: socket.data.user });
+        return;
+      }
       if (!socket.rooms.has(serverRoom(serverId))) return;
       socket.to(serverRoom(serverId)).emit("typing", { channelId, user: socket.data.user });
     });
@@ -62,6 +81,7 @@ async function main() {
     console.log(`> sedaamon ready on http://localhost:${port} (${dev ? "development" : "production"})`);
   });
 
+  startEventScheduler();
   syncVoiceFromLiveKit().catch((err) => console.warn("[livekit] presence sync skipped:", err.message));
 }
 

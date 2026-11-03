@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { handle, HttpError, requireMember, requireUser } from "@/server/http";
+import { assertPermission, handle, HttpError, requireMember, requireUser } from "@/server/http";
 import { Channel } from "@/server/models";
 import { emitToServer } from "@/server/realtime";
 import { toChannel } from "@/server/serialize";
@@ -8,7 +8,7 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/servers/[id]/chan
   const user = await requireUser();
   const { id } = await ctx.params;
   const member = await requireMember(id, user._id);
-  if (member.role !== "owner") throw new HttpError(403, "فقط مالک سرور می‌تواند کانال بسازد");
+  assertPermission(member, "channel:manage", "فقط مالک و مدیران سرور می‌توانند کانال بسازند");
 
   const body = z.object({ name: z.string(), type: z.enum(["text", "voice"]) }).parse(await req.json());
   const name = body.name.trim().replace(/\s+/g, "-");

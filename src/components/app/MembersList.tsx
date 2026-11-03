@@ -1,47 +1,75 @@
 "use client";
 
-import { Bell, Crown, Info, Plus, Users, Volume2, X } from "lucide-react";
+import { useState } from "react";
+import { Bell, BellOff, Info, LogOut, Plus, Settings, Users, Volume2, X } from "lucide-react";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { useSwipe } from "@/lib/mobile";
 import { useNotificationPref } from "@/lib/notifications";
+import { can, isMuted, ROLE_LABEL, ROLE_RANK } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
-import type { ChannelDTO, MemberDTO, ServerDTO, VoiceStates } from "@/lib/types";
+import { statusLine } from "@/lib/status";
+import type { ChannelDTO, MeDTO, MemberDTO, ServerDTO, VoiceStates } from "@/lib/types";
 import Avatar, { ServerAvatar } from "./Avatar";
+import { RoleIcon } from "./RoleBadge";
 
 /**
  * Server info and members: a side column on wide screens (which the user can hide);
  * below xl it slides in from the end edge as a sheet.
  */
 export default function MembersList({
+  me,
   server,
   members,
   channels,
   voiceStates,
+  online,
   open,
   hidden,
   onClose,
+  onOpenProfile,
+  onSettings,
   onNotify,
 }: {
+  me: MeDTO;
   server: ServerDTO;
   members: MemberDTO[];
   channels: ChannelDTO[];
   voiceStates: VoiceStates;
+  online: Record<string, boolean>;
   open: boolean;
   hidden: boolean;
   onClose: () => void;
+  onOpenProfile: (userId: string) => void;
+  onSettings: () => void;
   onNotify: (message: string) => void;
 }) {
   const swipe = useSwipe((toward) => toward === "end" && onClose());
   const notifications = useNotificationPref();
   const liveVoice = channels.filter((c) => c.type === "voice" && voiceStates[c.id]?.length);
   const inVoice = new Set(liveVoice.flatMap((c) => voiceStates[c.id].map((p) => p.id)));
-  // Owners first, then people in voice, then everyone else.
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  // Higher roles first, then people in voice, then by name.
   const sorted = [...members].sort(
     (a, b) =>
-      Number(b.role === "owner") - Number(a.role === "owner") ||
-      Number(inVoice.has(b.user.id)) - Number(inVoice.has(a.user.id)),
+      ROLE_RANK[b.role] - ROLE_RANK[a.role] ||
+      Number(inVoice.has(b.user.id)) - Number(inVoice.has(a.user.id)) ||
+      a.user.name.localeCompare(b.user.name, "fa"),
   );
+  const isOnline = (m: MemberDTO) => m.user.id === me.id || !!online[m.user.id];
+  const onlineMembers = sorted.filter(isOnline);
+  const offlineMembers = sorted.filter((m) => !isOnline(m));
+
+  const leave = async () => {
+    try {
+      // The server answers with a "server:removed" event, which takes this server off the screen.
+      await api(`/api/servers/${server.id}/members/${me.id}`, { method: "DELETE" });
+    } catch (err) {
+      onNotify((err as Error).message);
+      setConfirmLeave(false);
+    }
+  };
 
   const toggleNotifications = async () => {
     const on = await notifications.toggle();
@@ -88,7 +116,7 @@ export default function MembersList({
           <h2 className="mt-4 max-w-full truncate text-lg font-bold">{server.name}</h2>
           <p className="mt-0.5 text-xs text-muted">
             {toPersianDigits(members.length)} عضو
-            {server.role === "owner" && " · شما مالک این سرور هستید"}
+            {server.role !== "member" && ` · شما ${ROLE_LABEL[server.role]} این سرور هستید`}
           </p>
         </div>
 
@@ -99,6 +127,15 @@ export default function MembersList({
           دعوت دیگران
           <Plus className="size-4" />
         </button>
+        {can(server.role, "server:manage") && (
+          <button
+            onClick={onSettings}
+            className="flex items-center justify-between rounded-xl py-3 text-sm font-semibold text-muted transition hover:text-fg"
+          >
+            تنظیمات سرور
+            <Settings className="size-4" />
+          </button>
+        )}
 
         <Divider />
 
@@ -147,29 +184,90 @@ export default function MembersList({
           اعضا
           <span className="text-xs font-normal text-muted">({toPersianDigits(members.length)})</span>
         </h3>
-        <ul className="space-y-1">
-          {sorted.map((m) => (
-            <li key={m.user.id} className="flex items-center gap-3 rounded-xl py-1.5">
-              <span className="relative">
-                <Avatar user={m.user} />
-                {inVoice.has(m.user.id) && (
-                  <span className="absolute -end-0.5 -bottom-0.5 size-3 rounded-full bg-online ring-2 ring-ink-900" />
-                )}
-              </span>
-              <div className="min-w-0 flex-1 leading-5">
-                <p className="flex items-center gap-1.5 text-sm font-semibold">
-                  <span className="truncate">{m.user.name}</span>
-                  {m.role === "owner" && <Crown className="size-3.5 shrink-0 text-amber-400" aria-label="مالک سرور" />}
-                </p>
-                <p className="text-xs text-muted">
-                  {inVoice.has(m.user.id) ? "در کانال صوتی" : m.role === "owner" ? "مالک سرور" : "عضو"}
-                </p>
+        <MemberGroup title="آنلاین" members={onlineMembers} inVoice={inVoice} online={online} meId={me.id} onOpenProfile={onOpenProfile} />
+        <MemberGroup title="آفلاین" members={offlineMembers} inVoice={inVoice} online={online} meId={me.id} onOpenProfile={onOpenProfile} dim />
+
+        {server.role !== "owner" && (
+          <div className="mt-4 border-t border-white/5 pt-3">
+            {confirmLeave ? (
+              <div className="rounded-xl bg-danger/10 p-3">
+                <p className="mb-2 text-sm">از سرور {server.name} خارج می‌شوید؟</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={leave} className="rounded-xl bg-danger px-3 py-2 text-sm font-semibold text-white hover:bg-danger/90">
+                    خروج
+                  </button>
+                  <button onClick={() => setConfirmLeave(false)} className="rounded-xl bg-ink-800 px-3 py-2 text-sm text-muted hover:text-fg">
+                    انصراف
+                  </button>
+                </div>
               </div>
-            </li>
-          ))}
-        </ul>
+            ) : (
+              <button
+                onClick={() => setConfirmLeave(true)}
+                className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-danger hover:bg-danger/10"
+              >
+                <LogOut className="size-4" />
+                ترک سرور
+              </button>
+            )}
+          </div>
+        )}
       </aside>
     </>
+  );
+}
+
+function MemberGroup({
+  title,
+  members,
+  inVoice,
+  online,
+  meId,
+  dim,
+  onOpenProfile,
+}: {
+  title: string;
+  members: MemberDTO[];
+  inVoice: Set<string>;
+  online: Record<string, boolean>;
+  meId: string;
+  dim?: boolean;
+  onOpenProfile: (userId: string) => void;
+}) {
+  if (!members.length) return null;
+  return (
+    <section className="mb-2">
+      <h4 className="py-1.5 text-xs font-semibold text-muted">
+        {title} — {toPersianDigits(members.length)}
+      </h4>
+      <ul className="space-y-0.5">
+        {members.map((m) => {
+          const muted = isMuted(m.mutedUntil);
+          return (
+            <li key={m.user.id}>
+              <button
+                onClick={() => onOpenProfile(m.user.id)}
+                className={cn("flex w-full items-center gap-3 rounded-xl px-1.5 py-1.5 text-start hover:bg-ink-850", dim && "opacity-60 hover:opacity-100")}
+              >
+                <Avatar user={m.user} online={m.user.id === meId || !!online[m.user.id]} />
+                <div className="min-w-0 flex-1 leading-5">
+                  <p className="flex items-center gap-1.5 text-sm font-semibold">
+                    <span className="truncate">{m.user.name}</span>
+                    <RoleIcon role={m.role} />
+                    {muted && <BellOff className="size-3.5 shrink-0 text-amber-300" aria-label="بی‌صدا شده" />}
+                  </p>
+                  <p dir="auto" className="truncate text-xs text-muted">
+                    {inVoice.has(m.user.id)
+                      ? "در کانال صوتی"
+                      : (online[m.user.id] && statusLine(m.user)) || (m.role === "member" ? "عضو" : ROLE_LABEL[m.role])}
+                  </p>
+                </div>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
