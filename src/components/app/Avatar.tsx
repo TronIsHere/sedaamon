@@ -17,13 +17,13 @@ export default function Avatar({
   const circle = (
     <span
       className={cn(
-        "grid shrink-0 place-items-center rounded-full font-semibold text-white ring-2 transition",
+        "grid shrink-0 place-items-center rounded-full font-semibold text-white ring-2 transition-shadow duration-200",
         size === "sm" && "size-6 text-xs",
         size === "md" && "size-9 text-sm",
         size === "lg" && "size-20 text-3xl",
-        speaking ? "ring-accent" : "ring-white/10",
+        speaking ? "ring-accent shadow-[0_0_0_4px_color-mix(in_oklab,var(--color-accent)_22%,transparent)]" : "ring-transparent",
       )}
-      style={{ background: `linear-gradient(135deg, ${user.color}, color-mix(in oklab, ${user.color} 55%, #6c5ce7))` }}
+      style={{ background: `color-mix(in oklab, ${user.color} 85%, black)` }}
     >
       {user.avatar ? (
         // eslint-disable-next-line @next/next/no-img-element -- user uploads are already 256px and served by our own route
@@ -53,12 +53,12 @@ export default function Avatar({
   );
 }
 
-/** A server's initial on a violet gradient tile, used in the rail, chat header and info panel. */
+/** A server's initial on a lime tile, used in the info panel and invite page. */
 export function ServerAvatar({ name, className }: { name: string; className?: string }) {
   return (
     <span
       className={cn(
-        "grid shrink-0 place-items-center bg-linear-135 from-accent to-[#c46cf5] font-bold text-white shadow-lg shadow-accent-strong/20",
+        "grid shrink-0 place-items-center bg-accent-strong font-bold text-on-accent",
         className,
       )}
     >

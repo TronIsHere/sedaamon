@@ -34,7 +34,7 @@ export default function VoiceView({
       <div className="bg-glow relative flex min-h-0 flex-1 flex-col">
         <ConnectedStage participants={participants} />
         <div className="flex shrink-0 justify-center px-3 pt-2 pb-safe-4 sm:pb-5">
-          <div className="rounded-full bg-ink-900/80 p-2 shadow-2xl ring-1 ring-white/10 backdrop-blur">
+          <div className="rounded-full bg-ink-800 p-2.5 shadow-2xl shadow-black/50">
             <VoiceControls settings={settings} onLeave={onLeave} />
           </div>
         </div>
@@ -44,11 +44,11 @@ export default function VoiceView({
 
   return (
     <div className="bg-glow grid flex-1 place-items-center p-6 text-center">
-      <div className="w-full max-w-sm rounded-3xl bg-ink-900/70 p-8 ring-1 ring-white/5 backdrop-blur">
-        <span className="relative mx-auto grid size-20 place-items-center rounded-3xl bg-accent-strong text-white shadow-2xl shadow-accent-strong/40">
+      <div className="w-full max-w-sm rounded-[1.75rem] bg-ink-800 p-8">
+        <span className="relative mx-auto grid size-20 place-items-center rounded-full bg-accent-strong text-on-accent">
           <Volume2 className="size-9" />
           {participants.length > 0 && (
-            <span className="absolute inset-0 animate-ping rounded-3xl bg-accent-strong/30 [animation-duration:2s]" />
+            <span className="absolute inset-0 animate-ping rounded-full bg-accent-strong/30 [animation-duration:2s]" />
           )}
         </span>
         <h2 className="mt-5 text-xl font-bold">{channel.name}</h2>
@@ -73,7 +73,7 @@ export default function VoiceView({
         <button
           onClick={onJoin}
           disabled={joining}
-          className="mx-auto mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-accent-strong px-6 py-3 font-semibold text-white shadow-lg shadow-accent-strong/30 hover:bg-accent disabled:opacity-60"
+          className="btn-primary mx-auto mt-6 w-full px-6"
         >
           {joining && <Loader2 className="size-4 animate-spin" />}
           پیوستن به کانال
@@ -108,7 +108,7 @@ function ConnectedStage({ participants }: { participants: VoiceParticipant[] }) 
               key={p.identity}
               className={cn(
                 "flex items-center gap-2 rounded-full bg-ink-900/80 py-1 ps-1 pe-3 text-xs ring-1",
-                p.isSpeaking ? "ring-2 ring-accent" : "ring-white/5",
+                p.isSpeaking ? "ring-2 ring-accent" : "ring-line",
               )}
             >
               <Avatar
@@ -142,8 +142,8 @@ function ConnectedStage({ participants }: { participants: VoiceParticipant[] }) 
           <div
             key={p.identity}
             className={cn(
-              "flex aspect-square flex-col items-center justify-center gap-3 rounded-3xl bg-ink-900/80 p-4 ring-1 transition",
-              p.isSpeaking ? "shadow-2xl shadow-accent-strong/30 ring-2 ring-accent" : "ring-white/5",
+              "flex aspect-square flex-col items-center justify-center gap-3 rounded-3xl bg-ink-800 p-4 ring-2 transition",
+              p.isSpeaking ? "ring-accent" : "ring-transparent",
             )}
           >
             <span className={cn("rounded-full transition", p.isSpeaking && "ring-4 ring-accent/40")}>
@@ -157,7 +157,7 @@ function ConnectedStage({ participants }: { participants: VoiceParticipant[] }) 
               <span className="truncate">{p.name}</span>
               {!p.isMicrophoneEnabled && <MicOff className="size-3.5 shrink-0 text-danger" />}
             </span>
-            {p.isLocal && <span className="-mt-2 text-[11px] text-muted">شما</span>}
+            {p.isLocal && <span className="-mt-2 text-xs text-muted">شما</span>}
           </div>
         ))}
       </div>
@@ -182,7 +182,7 @@ function ShareVolume() {
   return (
     <label
       dir="rtl"
-      className="absolute end-5 top-5 z-10 flex items-center gap-2 rounded-full bg-ink-900/85 px-3 py-2 text-xs shadow-xl ring-1 ring-white/10 backdrop-blur"
+      className="absolute end-5 top-5 z-10 flex items-center gap-2 rounded-full bg-ink-800/90 px-3 py-2 text-xs shadow-xl backdrop-blur"
     >
       <Icon className="size-4 shrink-0" />
       <span className="sr-only sm:not-sr-only">صدای اشتراک</span>

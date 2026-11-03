@@ -1,5 +1,6 @@
 import type { Server as IOServer } from "socket.io";
 import type { VoiceParticipant, VoiceStates } from "@/lib/types";
+import { channelAudienceById } from "./access";
 
 interface RealtimeState {
   io?: IOServer;
@@ -64,7 +65,19 @@ export function clearVoiceChannel(serverId: string, channelId: string) {
   broadcastVoice(serverId, channelId);
 }
 
+/** Sends to the whole server for a public channel, or only to those who may see a private one (`audience` is their ids). */
+export function emitToAudience(serverId: string, audience: string[] | null, event: string, payload: unknown) {
+  if (audience) emitToUsers(audience, event, payload);
+  else emitToServer(serverId, event, payload);
+}
+
 function broadcastVoice(serverId: string, channelId: string) {
-  const participants = [...(realtime.voice.get(channelId)?.values() ?? [])];
-  emitToServer(serverId, "voice:state", { channelId, participants });
+  // Who is in a private room is private too, so the audience is looked up first. If that fails nobody is told.
+  channelAudienceById(channelId)
+    .then((audience) => {
+      // Read after the lookup so a burst of joins and leaves always ends on the latest state.
+      const participants = [...(realtime.voice.get(channelId)?.values() ?? [])];
+      emitToAudience(serverId, audience, "voice:state", { channelId, participants });
+    })
+    .catch((err) => console.error("[voice]", err));
 }

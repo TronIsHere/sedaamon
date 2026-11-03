@@ -1,11 +1,9 @@
-import { AudioLines, MessageCircle, Plus, Users } from "lucide-react";
+import { AudioLines, Compass, MessageCircle, Plus, Users } from "lucide-react";
 import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
 import type { MeDTO, ServerDTO } from "@/lib/types";
-import Avatar, { ServerAvatar } from "./Avatar";
 
 export default function ServerRail({
-  me,
   servers,
   activeId,
   unread,
@@ -17,7 +15,7 @@ export default function ServerRail({
   dmUnread,
   onDms,
   onFriends,
-  onProfile,
+  onDiscover,
 }: {
   me: MeDTO;
   servers: ServerDTO[];
@@ -35,71 +33,54 @@ export default function ServerRail({
   dmUnread: number;
   onDms: () => void;
   onFriends: () => void;
+  onDiscover: () => void;
+  /** Opens your account; reached from the header avatar and the sidebar footer instead of the rail. */
   onProfile: () => void;
 }) {
   return (
-    <nav className="flex w-[72px] flex-col items-center bg-ink-950 pt-4 pb-safe-4">
-      <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-accent-strong text-white shadow-lg shadow-accent-strong/40">
-        <AudioLines className="size-5" />
+    <nav aria-label="سرورها" className="flex w-[76px] flex-col items-center bg-ink-900 pt-4 pb-safe-4 md:rounded-[1.75rem] md:pb-4">
+      <span className="grid size-12 shrink-0 place-items-center rounded-full bg-accent-strong text-on-accent">
+        <AudioLines className="size-6" strokeWidth={2.5} />
       </span>
-      <button
-        onClick={onProfile}
-        title="حساب کاربری"
-        aria-label="حساب کاربری"
-        className="mt-4 shrink-0 rounded-full p-0.5 ring-2 ring-accent/60 transition hover:ring-accent"
-      >
-        <Avatar user={me} size="md" />
-      </button>
 
-      <button
-        onClick={onDms}
-        title="پیام‌های مستقیم"
-        aria-label="پیام‌های مستقیم"
-        aria-pressed={dmActive}
-        className={cn(
-          "relative mt-3 grid size-11 shrink-0 place-items-center rounded-xl ring-1 transition",
-          dmActive ? "bg-accent-strong text-white ring-accent/40" : "bg-ink-850 text-muted ring-white/5 hover:bg-ink-700 hover:text-fg",
-        )}
-      >
-        <MessageCircle className="size-5" />
-        {dmUnread > 0 && !dmActive && <Badge count={dmUnread} className="absolute -end-1.5 -top-1.5 ring-2 ring-ink-950" />}
-      </button>
+      <div className="mt-5 flex shrink-0 flex-col items-center gap-2.5">
+        <RailButton label="پیام‌های مستقیم" active={dmActive} onClick={onDms}>
+          <MessageCircle className="size-5" />
+          {dmUnread > 0 && !dmActive && <Badge count={dmUnread} className="absolute -end-1 -top-1 ring-2 ring-ink-900" />}
+        </RailButton>
+        <RailButton label="دوستان" onClick={onFriends}>
+          <Users className="size-5" />
+          {friendRequests > 0 && <Badge count={friendRequests} className="absolute -end-1 -top-1 ring-2 ring-ink-900" />}
+        </RailButton>
+        <RailButton label="کاوش سرورها" onClick={onDiscover}>
+          <Compass className="size-5" />
+        </RailButton>
+      </div>
 
-      <button
-        onClick={onFriends}
-        title="دوستان"
-        aria-label="دوستان"
-        className="relative mt-3 grid size-11 shrink-0 place-items-center rounded-xl bg-ink-850 text-muted ring-1 ring-white/5 transition hover:bg-ink-700 hover:text-fg"
-      >
-        <Users className="size-5" />
-        {friendRequests > 0 && <Badge count={friendRequests} className="absolute -end-1.5 -top-1.5 ring-2 ring-ink-950" />}
-      </button>
-
-      <p className="mt-5 mb-2 shrink-0 text-[10px] font-semibold tracking-wide text-muted">سرورها</p>
-      <div className="scrollbar-none flex w-full flex-1 flex-col items-center gap-3 overflow-y-auto py-1">
+      <div role="separator" className="mx-auto my-4 h-px w-8 shrink-0 rounded-full bg-ink-700" />
+      <div className="scrollbar-none flex w-full flex-1 flex-col items-center gap-2.5 overflow-y-auto py-1">
         {servers.map((s) => {
           const active = s.id === activeId;
           const pinged = active ? 0 : (pings[s.id] ?? 0);
           const count = active ? 0 : (unread[s.id] ?? 0);
           return (
-            <div key={s.id} className="relative flex w-full shrink-0 justify-center">
-              <span
-                className={cn(
-                  "absolute start-0 top-1/2 w-1 -translate-y-1/2 rounded-e-full bg-accent transition-all",
-                  active ? "h-8" : count ? "h-2" : "h-0",
-                )}
-              />
-              <button title={s.name} aria-label={s.name} onClick={() => onSelect(s.id)} className="group relative rounded-xl">
-                {active ? (
-                  <ServerAvatar name={s.name} className="size-11 rounded-xl text-base" />
-                ) : (
-                  <span className="grid size-11 place-items-center rounded-xl bg-ink-850 text-base font-semibold text-muted ring-1 ring-white/5 transition group-hover:bg-ink-700 group-hover:text-fg">
-                    {s.name.trim()[0]}
-                  </span>
-                )}
-                {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="absolute -end-1.5 -bottom-1 ring-2 ring-ink-950" />}
-              </button>
-            </div>
+            <button
+              key={s.id}
+              title={s.name}
+              aria-label={s.name}
+              aria-current={active ? "true" : undefined}
+              onClick={() => onSelect(s.id)}
+              className={cn(
+                "relative grid size-12 shrink-0 place-items-center rounded-full text-sm font-semibold transition-colors duration-150",
+                active
+                  ? "bg-ink-800 text-fg ring-2 ring-accent ring-offset-2 ring-offset-ink-900"
+                  : "bg-ink-800 text-muted hover:bg-ink-700 hover:text-fg",
+                count > 0 && !active && "text-fg",
+              )}
+            >
+              {initials(s.name)}
+              {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="absolute -end-1 -bottom-0.5 ring-2 ring-ink-900" />}
+            </button>
           );
         })}
       </div>
@@ -108,11 +89,48 @@ export default function ServerRail({
         title="ساختن یا پیوستن به سرور"
         aria-label="ساختن یا پیوستن به سرور"
         onClick={onAdd}
-        className="mt-3 grid size-11 shrink-0 place-items-center rounded-xl bg-accent-strong text-white shadow-lg shadow-accent-strong/40 transition hover:bg-accent active:scale-95"
+        className="mt-3 grid size-12 shrink-0 place-items-center rounded-full bg-accent-strong text-on-accent transition hover:brightness-105 active:scale-95"
       >
-        <Plus className="size-5" />
+        <Plus className="size-6" />
       </button>
     </nav>
+  );
+}
+
+/** Up to two initials, kept as separate letters (ZWNJ) so Persian ones don't join into a word. */
+function initials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0])
+    .join("\u200c");
+}
+
+function RailButton({
+  label,
+  active,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      className={cn(
+        "relative grid size-12 shrink-0 place-items-center rounded-full transition-colors duration-150",
+        active ? "bg-accent-strong text-on-accent" : "bg-ink-800 text-muted hover:bg-ink-700 hover:text-fg",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -121,8 +139,8 @@ export function Badge({ count, ping, className }: { count: number; ping?: boolea
   return (
     <span
       className={cn(
-        "grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[11px] leading-none font-bold text-white",
-        ping ? "bg-danger" : "bg-accent-strong",
+        "grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[11px] leading-none font-bold",
+        ping ? "bg-danger-strong text-white" : "bg-accent-strong text-on-accent",
         className,
       )}
     >

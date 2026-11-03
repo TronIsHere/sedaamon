@@ -32,10 +32,10 @@ export default function JoinInvite({
   }
 
   return (
-    <div className="w-full max-w-sm rounded-2xl border border-ink-700 bg-ink-900 p-6 text-center shadow-2xl shadow-black/40">
+    <div className="w-full max-w-sm animate-pop-in rounded-[2rem] bg-ink-900 p-7 text-center">
       {server ? (
         <>
-          <span className="mx-auto mb-4 grid size-16 place-items-center rounded-2xl bg-accent-strong/15 text-2xl font-bold text-accent">
+          <span className="mx-auto mb-4 grid size-16 place-items-center rounded-full bg-accent-strong text-2xl font-bold text-on-accent">
             {server.name.trim()[0]}
           </span>
           <p className="text-sm text-muted">به این سرور دعوت شده‌اید</p>
@@ -44,7 +44,7 @@ export default function JoinInvite({
           <button
             onClick={join}
             disabled={busy}
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-accent-strong shadow-lg shadow-accent-strong/25 px-4 py-2.5 font-semibold text-white hover:bg-accent disabled:opacity-60"
+            className="btn-primary mt-6 w-full"
           >
             {busy && <Loader2 className="size-4 animate-spin" />}
             پیوستن به سرور

@@ -16,7 +16,7 @@ export default async function InvitePage({ params }: PageProps<"/invite/[code]">
   const memberCount = server ? await Member.countDocuments({ server: server._id }) : 0;
 
   return (
-    <main className="bg-glow grid min-h-full place-items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-safe-4">
+    <main className="grid bg-ink-950 min-h-full place-items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-safe-4">
       <JoinInvite code={code} server={server ? { name: server.name, memberCount } : null} />
     </main>
   );

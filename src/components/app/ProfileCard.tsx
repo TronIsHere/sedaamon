@@ -1,15 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Clock, Loader2, MessageCircle, Server, Shield, ShieldOff, UserCheck, UserMinus, UserPlus, UserX, Volume2, VolumeX } from "lucide-react";
+import { Clock, Loader2, MessageCircle, Server, UserCheck, UserMinus, UserPlus, UserX, Volume2, VolumeX } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn, formatAgo, formatDate } from "@/lib/format";
-import { can, canModerate, isMuted } from "@/lib/permissions";
+import { cn, formatDate, formatLastSeen } from "@/lib/format";
+import { ASSIGNABLE_ROLES, can, canModerate, isMuted, ROLE_HINT, ROLE_LABEL } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { statusLabel } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
 import type { FriendState, MemberDTO, ProfileDTO, Role } from "@/lib/types";
 import Avatar from "./Avatar";
+import { BadgeShelf } from "./Badges";
 import { Modal } from "./Dialogs";
 import { RolePill } from "./RoleBadge";
 
@@ -108,7 +109,7 @@ export default function ProfileCard({
         )
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center gap-4 rounded-2xl bg-ink-950 p-4 ring-1 ring-white/5">
+          <div className="flex items-center gap-4 rounded-2xl bg-ink-850 p-4 ring-1 ring-line">
             <Avatar user={profile} size="lg" online={online} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-lg font-bold">{profile.name}</p>
@@ -128,7 +129,7 @@ export default function ProfileCard({
                 ) : profile.lastSeenAt ? (
                   <>
                     <Clock className="size-3.5" />
-                    آخرین بازدید {formatAgo(profile.lastSeenAt)}
+                    آخرین بازدید {formatLastSeen(profile.lastSeenAt)}
                   </>
                 ) : (
                   "آفلاین"
@@ -140,9 +141,16 @@ export default function ProfileCard({
           {profile.bio && (
             <section>
               <h3 className="mb-1.5 text-xs font-semibold text-muted">درباره من</h3>
-              <p dir="auto" className="rounded-xl bg-ink-850 px-4 py-3 text-sm leading-7 whitespace-pre-wrap break-words ring-1 ring-white/5">
+              <p dir="auto" className="bidi-lines rounded-xl bg-ink-850 px-4 py-3 text-sm leading-7 whitespace-pre-wrap break-words ring-1 ring-line">
                 {profile.bio}
               </p>
+            </section>
+          )}
+
+          {member && (
+            <section>
+              <h3 className="mb-1.5 text-xs font-semibold text-muted">نشان‌ها در این سرور</h3>
+              <BadgeShelf earned={member.badges} />
             </section>
           )}
 
@@ -166,7 +174,7 @@ export default function ProfileCard({
               </h3>
               <div className="flex flex-wrap gap-1.5">
                 {profile.mutualServers.map((s) => (
-                  <span key={s.id} className="flex items-center gap-1.5 rounded-full bg-ink-850 px-3 py-1 text-xs ring-1 ring-white/5">
+                  <span key={s.id} className="flex items-center gap-1.5 rounded-full bg-ink-850 px-3 py-1 text-xs ring-1 ring-line">
                     <Server className="size-3 text-accent" />
                     {s.name}
                   </span>
@@ -175,10 +183,10 @@ export default function ProfileCard({
             </section>
           )}
 
-          <section className="space-y-2 border-t border-white/5 pt-4">
+          <section className="space-y-2 border-t border-line pt-4">
             <button
               onClick={() => onMessage(userId)}
-              className={cn(buttonClass, "bg-accent-strong text-white shadow-lg shadow-accent-strong/25 hover:bg-accent")}
+              className={cn(buttonClass, "bg-accent-strong text-on-accent hover:bg-accent")}
             >
               <MessageCircle className="size-4" />
               ارسال پیام
@@ -208,7 +216,7 @@ export default function ProfileCard({
                 <button
                   disabled={busy}
                   onClick={() => friendAction(() => api(`/api/friends/${userId}`, { method: "PATCH" }))}
-                  className={cn(buttonClass, "bg-accent-strong text-white hover:bg-accent")}
+                  className={cn(buttonClass, "bg-accent-strong text-on-accent hover:bg-accent")}
                 >
                   <UserCheck className="size-4" />
                   پذیرفتن
@@ -243,20 +251,26 @@ export default function ProfileCard({
           </section>
 
           {(showRoleControl || showModeration) && serverId && (
-            <section className="space-y-2 border-t border-white/5 pt-4">
+            <section className="space-y-2 border-t border-line pt-4">
               <h3 className="text-xs font-semibold text-muted">مدیریت عضو</h3>
 
               {showRoleControl && member && (
-                <button
-                  disabled={busy}
-                  onClick={() =>
-                    run(() => api(memberPath, { method: "PATCH", body: { role: member.role === "admin" ? "member" : "admin" } }))
-                  }
-                  className={cn(buttonClass, "bg-ink-800 hover:bg-ink-700")}
-                >
-                  {member.role === "admin" ? <ShieldOff className="size-4" /> : <Shield className="size-4 text-sky-400" />}
-                  {member.role === "admin" ? "برکناری از مدیریت" : "ارتقا به مدیر"}
-                </button>
+                <label className="block space-y-1.5">
+                  <span className="text-sm text-muted">نقش در سرور</span>
+                  <select
+                    disabled={busy}
+                    value={member.role}
+                    onChange={(e) => run(() => api(memberPath, { method: "PATCH", body: { role: e.target.value } }))}
+                    className="w-full rounded-xl border border-line bg-ink-850 px-3 py-2.5 text-sm outline-none focus:border-accent"
+                  >
+                    {ASSIGNABLE_ROLES.map((r) => (
+                      <option key={r} value={r}>
+                        {ROLE_LABEL[r]}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="block text-xs leading-5 text-muted">{ROLE_HINT[member.role]}</span>
+                </label>
               )}
 
               {showModeration && (
@@ -276,7 +290,7 @@ export default function ProfileCard({
                         value={muteMinutes}
                         onChange={(e) => setMuteMinutes(Number(e.target.value))}
                         aria-label="مدت بی‌صدایی"
-                        className="rounded-xl border border-white/5 bg-ink-950 px-3 text-sm outline-none focus:border-accent"
+                        className="rounded-xl border border-line bg-ink-850 px-3 text-sm outline-none focus:border-accent"
                       >
                         {MUTE_OPTIONS.map((o) => (
                           <option key={o.minutes} value={o.minutes}>
@@ -341,7 +355,7 @@ function ConfirmRow({
     <div className="rounded-xl bg-danger/10 p-3">
       <p className="mb-2 text-sm">{label}</p>
       <div className="grid grid-cols-2 gap-2">
-        <button disabled={busy} onClick={onConfirm} className={cn(buttonClass, "bg-danger text-white hover:bg-danger/90")}>
+        <button disabled={busy} onClick={onConfirm} className={cn(buttonClass, "bg-danger-strong text-white hover:bg-danger-strong/90")}>
           {action}
         </button>
         <button onClick={onCancel} className={cn(buttonClass, "bg-ink-800 text-muted hover:text-fg")}>

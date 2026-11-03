@@ -13,12 +13,13 @@ const hostname = process.env.HOST ?? "0.0.0.0";
 async function main() {
   // Imported after the env is loaded so they see MONGODB_URI, LIVEKIT_* etc.
   const { connectDB } = await import("./src/server/db");
-  const { Conversation, Member } = await import("./src/server/models");
+  const { Channel, Conversation, Member } = await import("./src/server/models");
+  const { channelAudience, memberCanView } = await import("./src/server/access");
   const { toUser } = await import("./src/server/serialize");
   const { DM_SCOPE } = await import("./src/lib/types");
   const { isValidObjectId } = await import("mongoose");
   const { userFromToken, SESSION_COOKIE } = await import("./src/server/session");
-  const { realtime, serverRoom, userRoom } = await import("./src/server/realtime");
+  const { emitToUsers, realtime, serverRoom, userRoom } = await import("./src/server/realtime");
   const { syncVoiceFromLiveKit } = await import("./src/server/livekit");
   const { userConnected, userDisconnected } = await import("./src/server/presence");
   const { startEventScheduler } = await import("./src/server/events");
@@ -72,8 +73,15 @@ async function main() {
         if (others.length) socket.to(others.map(userRoom)).emit("typing", { channelId, user: socket.data.user });
         return;
       }
-      if (!socket.rooms.has(serverRoom(serverId))) return;
-      socket.to(serverRoom(serverId)).emit("typing", { channelId, user: socket.data.user });
+      if (!socket.rooms.has(serverRoom(serverId)) || !isValidObjectId(channelId)) return;
+      // Typing in a private channel is only shown to the people who can see it.
+      const channel = await Channel.findOne({ _id: channelId, server: serverId }, { server: 1, isPrivate: 1, allowedRoles: 1, allowedMembers: 1 }).lean().catch(() => null);
+      if (!channel) return;
+      if (!channel.isPrivate) return void socket.to(serverRoom(serverId)).emit("typing", { channelId, user: socket.data.user });
+      const me = await Member.findOne({ server: serverId, user: userId }, { user: 1, role: 1 }).lean().catch(() => null);
+      if (!me || !memberCanView(channel, me)) return;
+      const audience = ((await channelAudience(channel).catch(() => null)) ?? []).filter((id) => id !== userId);
+      emitToUsers(audience, "typing", { channelId, user: socket.data.user });
     });
   });
 

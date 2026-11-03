@@ -4,7 +4,7 @@ import "@livekit/components-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoomAudioRenderer, RoomContext, useAudioPlayback } from "@livekit/components-react";
 import { DisconnectReason, LocalAudioTrack, Room, RoomEvent, Track, type RemoteTrackPublication } from "livekit-client";
-import { Bell, Hash, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Compass, Hash, Lock, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { can, isMuted, ROLE_LABEL } from "@/lib/permissions";
@@ -37,6 +37,7 @@ import {
 import Avatar from "./Avatar";
 import ChannelSidebar from "./ChannelSidebar";
 import ChatView from "./ChatView";
+import DiscoverDialog from "./DiscoverDialog";
 import { CreateChannelDialog, EditChannelDialog, ProfileDialog, ServerDialog } from "./Dialogs";
 import EventsDialog, { formatEventWhen } from "./EventsDialog";
 import FriendsDialog from "./FriendsDialog";
@@ -47,6 +48,7 @@ import ServerRail, { Badge } from "./ServerRail";
 import ServerSettingsDialog from "./ServerSettingsDialog";
 import VoiceBar from "./VoiceBar";
 import VoiceView from "./VoiceView";
+import WelcomeDialog from "./WelcomeDialog";
 import { WatchProvider } from "./WatchTogether";
 
 export interface VoiceConnection {
@@ -69,6 +71,8 @@ type Dialog =
   | { kind: "serverSettings" }
   | { kind: "events" }
   | { kind: "friends" }
+  | { kind: "discover" }
+  | { kind: "welcome" }
   | { kind: "notifications" }
   | { kind: "user"; userId: string }
   | { kind: "channel"; type: ChannelDTO["type"] }
@@ -114,6 +118,8 @@ export default function App({
   const [dms, setDms] = useState<DmDTO[]>([]);
   const [reloadKey, setReloadKey] = useState(0);
   const lastChannelByServer = useRef<Record<string, string>>({});
+  /** Servers whose welcome screen was already put in front of the person in this visit. */
+  const welcomeShown = useRef(new Set<string>());
   const lowDataRef = useRef(lowData);
   const activeChannelRef = useRef(activeChannelId);
   const serversRef = useRef(servers);
@@ -240,6 +246,13 @@ export default function App({
     };
   }, [activeServerId, reloadKey, notify, markOnline]);
 
+  // A newcomer is greeted once per visit; the screen comes back on the next load until they finish it.
+  useEffect(() => {
+    if (!detail?.onboarding.welcomePending || !detail.welcome.enabled || welcomeShown.current.has(detail.server.id)) return;
+    welcomeShown.current.add(detail.server.id);
+    setDialog((d) => d ?? { kind: "welcome" });
+  }, [detail]);
+
   const dropCall = useCallback(() => {
     room.disconnect();
     setConnection(null);
@@ -263,7 +276,7 @@ export default function App({
     const onChannel = (c: ChannelDTO) =>
       setDetail((d) =>
         d && d.server.id === c.serverId && !d.channels.some((x) => x.id === c.id)
-          ? { ...d, channels: [...d.channels, c] }
+          ? { ...d, channels: [...d.channels, c].sort((a, b) => a.position - b.position) }
           : d,
       );
     const onMember = ({ serverId, member }: { serverId: string; member: MemberDTO }) =>
@@ -286,7 +299,11 @@ export default function App({
       if (!mine) return;
       const previous = serversRef.current.find((s) => s.id === serverId)?.role;
       setServers((list) => list.map((s) => (s.id === serverId ? { ...s, role: member.role } : s)));
-      if (previous && previous !== member.role) notify(`نقش شما در این سرور «${ROLE_LABEL[member.role]}» شد`);
+      if (previous && previous !== member.role) {
+        notify(`نقش شما در این سرور «${ROLE_LABEL[member.role]}» شد`);
+        // A new role can open or close private channels, so the list is fetched again.
+        setReloadKey((k) => k + 1);
+      }
       else if (isMuted(member.mutedUntil)) notify("شما در این سرور بی‌صدا شده‌اید");
     };
     const onMemberRemove = ({ serverId, userId }: { serverId: string; userId: string }) =>
@@ -327,6 +344,10 @@ export default function App({
       notify(text);
       // Only people who said they would come get a system notification.
       if (event.interested.includes(initialMe.id)) showNotification(serversRef.current.find((s) => s.id === event.serverId)?.name ?? "صدامون", text, `event:${event.id}:${kind}`);
+    };
+    // The welcome screen, its rules or the starter channels changed: fetch the server again.
+    const onWelcomeChanged = ({ serverId }: { serverId: string }) => {
+      if (serverId === activeServerRef.current) setReloadKey((k) => k + 1);
     };
     const onChannelUpdate = (c: ChannelDTO) =>
       setDetail((d) => (d && d.server.id === c.serverId ? { ...d, channels: d.channels.map((x) => (x.id === c.id ? c : x)) } : d));
@@ -402,6 +423,7 @@ export default function App({
     socket.on("event:update", putEvent);
     socket.on("event:delete", onEventDelete);
     socket.on("event:alert", onEventAlert);
+    socket.on("welcome:changed", onWelcomeChanged);
     socket.on("channel:update", onChannelUpdate);
     socket.on("channel:delete", onChannelDelete);
     socket.on("presence", onPresence);
@@ -423,6 +445,7 @@ export default function App({
       socket.off("event:update", putEvent);
       socket.off("event:delete", onEventDelete);
       socket.off("event:alert", onEventAlert);
+      socket.off("welcome:changed", onWelcomeChanged);
       socket.off("channel:update", onChannelUpdate);
       socket.off("channel:delete", onChannelDelete);
       socket.off("presence", onPresence);
@@ -651,12 +674,12 @@ export default function App({
   const activeDm = dmMode ? (dms.find((d) => d.id === activeChannelId) ?? null) : null;
   // A conversation is shown through the same chat view as a text channel.
   const channel: ChannelDTO | null = activeDm
-    ? { id: activeDm.id, serverId: DM_SCOPE, name: activeDm.peer.name, type: "text", position: 0 }
+    ? { id: activeDm.id, serverId: DM_SCOPE, name: activeDm.peer.name, type: "text", position: 0, isPrivate: false, allowedRoles: [], allowedMembers: [] }
     : (currentDetail?.channels.find((c) => c.id === activeChannelId) ?? null);
   const dmMembers: MemberDTO[] = activeDm
     ? [
-        { user: me, role: "member", mutedUntil: null },
-        { user: activeDm.peer, role: "member", mutedUntil: null },
+        { user: me, role: "member", mutedUntil: null, joinedAt: "", badges: [] },
+        { user: activeDm.peer, role: "member", mutedUntil: null, joinedAt: "", badges: [] },
       ]
     : [];
   const settings: VoiceSettings = { deafened, lowData, setDeafened, setLowData };
@@ -678,7 +701,7 @@ export default function App({
     <RoomContext.Provider value={room}>
       <RoomAudioRenderer muted={deafened} />
       <WatchProvider onNotify={notify}>
-        <div className="flex h-dvh overflow-hidden bg-ink-950 pt-safe px-safe">
+        <div className="flex h-dvh overflow-hidden bg-ink-950 pt-safe px-safe md:gap-2 md:p-2">
           <div
             className={cn(
               "fixed inset-0 z-20 bg-black/60 backdrop-blur-sm transition-opacity md:hidden",
@@ -690,7 +713,7 @@ export default function App({
           <aside
             {...sidebarSwipe}
             className={cn(
-              "z-30 flex shrink-0 select-none",
+              "z-30 flex shrink-0 select-none md:gap-2",
               "max-md:fixed max-md:inset-y-0 max-md:start-0 max-md:bg-ink-950 max-md:pt-safe max-md:shadow-2xl max-md:transition-[translate,visibility] max-md:duration-200 max-md:ease-out",
               !sidebarOpen && "max-md:invisible ltr:max-md:-translate-x-full rtl:max-md:translate-x-full",
             )}
@@ -708,6 +731,7 @@ export default function App({
               dmUnread={serverUnread[DM_SCOPE] ?? 0}
               onDms={() => selectServer(DM_SCOPE)}
               onFriends={() => setDialog({ kind: "friends" })}
+              onDiscover={() => setDialog({ kind: "discover" })}
               onProfile={() => setDialog({ kind: "profile" })}
             />
             <ChannelSidebar
@@ -734,14 +758,14 @@ export default function App({
           </aside>
 
           <main className="flex min-w-0 flex-1 flex-col" {...mainSwipe}>
-            <header className="flex h-16 shrink-0 items-center gap-2 border-b border-white/5 bg-ink-900/60 px-2 backdrop-blur select-none md:gap-3 md:px-5">
+            <header className="relative z-10 flex h-16 shrink-0 items-center gap-2 px-2 select-none md:h-14 md:gap-3 md:px-1">
               <HeaderButton className="md:hidden" label="منو" onClick={() => setSidebarOpen(true)}>
                 <Menu className="size-5" />
                 {unreadTotal > 0 && <span className="absolute top-1.5 end-1.5 size-2 rounded-full bg-accent" />}
               </HeaderButton>
 
               {search !== null ? (
-                <label className="flex min-w-0 flex-1 items-center gap-2 rounded-xl bg-ink-950 px-3 ring-1 ring-accent/50">
+                <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full bg-ink-900 px-4 ring-2 ring-accent/60">
                   <Search className="size-4 shrink-0 text-muted" />
                   <input
                     autoFocus
@@ -749,9 +773,9 @@ export default function App({
                     onChange={(e) => setSearch(e.target.value)}
                     onKeyDown={(e) => e.key === "Escape" && setSearch(null)}
                     placeholder={`جست‌وجو در ${activeDm ? "" : "#"}${channel?.name ?? ""}`}
-                    className="min-w-0 flex-1 bg-transparent py-2.5 text-sm outline-none placeholder:text-muted/70"
+                    className="min-w-0 flex-1 bg-transparent py-2.5 text-base md:text-sm outline-none placeholder:text-muted"
                   />
-                  <button onClick={() => setSearch(null)} aria-label="بستن جست‌وجو" className="-me-1 p-1 text-muted hover:text-fg">
+                  <button onClick={() => setSearch(null)} aria-label="بستن جست‌وجو" className="-me-1.5 grid size-9 place-items-center rounded-lg text-muted hover:text-fg">
                     <X className="size-4" />
                   </button>
                 </label>
@@ -765,7 +789,7 @@ export default function App({
                   >
                     <Avatar user={activeDm.peer} online={!!onlineNow[activeDm.peer.id]} />
                     <span className="min-w-0 leading-5">
-                      <span className="block truncate font-semibold">{activeDm.peer.name}</span>
+                      <span className="block truncate text-lg font-bold md:text-xl">{activeDm.peer.name}</span>
                       <span dir="auto" className={cn("block truncate text-xs", onlineNow[activeDm.peer.id] ? "text-online" : "text-muted")}>
                         {(onlineNow[activeDm.peer.id] && statusLine(activeDm.peer)) || (onlineNow[activeDm.peer.id] ? "آنلاین" : "آفلاین")}
                       </span>
@@ -774,11 +798,14 @@ export default function App({
                 )}
                 {channel && currentDetail && (
                   <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-linear-135 from-accent/25 to-accent-strong/10 text-accent ring-1 ring-accent/20">
+                    <span className="hidden size-10 shrink-0 place-items-center rounded-full bg-ink-900 text-fg sm:grid">
                       {channel.type === "text" ? <Hash className="size-5" /> : <Volume2 className="size-5" />}
                     </span>
                     <div className="min-w-0 leading-5">
-                      <h2 className="truncate font-semibold">{channel.name}</h2>
+                      <h2 className="flex items-center gap-1.5 text-lg font-bold md:text-xl">
+                        <span className="truncate">{channel.name}</span>
+                        {channel.isPrivate && <Lock className="size-3.5 shrink-0 text-muted" aria-label="کانال خصوصی" />}
+                      </h2>
                       <p className="flex items-center gap-1.5 truncate text-xs text-muted">
                         {toPersianDigits(currentDetail.members.length)} عضو
                         <span className="size-1 rounded-full bg-muted/60" />
@@ -790,7 +817,7 @@ export default function App({
                 </>
               )}
 
-              <div className="ms-auto flex shrink-0 items-center gap-0.5">
+              <div className="ms-auto flex shrink-0 items-center gap-1 md:gap-2">
                   {search === null && (
                     <HeaderButton label="اعلان‌ها" onClick={() => setDialog({ kind: "notifications" })}>
                       <Bell className={cn("size-5", unreadPings > 0 && "text-fg")} />
@@ -814,7 +841,7 @@ export default function App({
                   )}
                   {currentDetail && (
                     <HeaderButton
-                      className={cn(!infoHidden && "xl:hidden", "text-accent")}
+                      className={cn(!infoHidden && "xl:hidden")}
                       label="اطلاعات سرور"
                       onClick={() => {
                         setInfoHidden(false);
@@ -824,13 +851,23 @@ export default function App({
                       <PanelLeft className="size-5 ltr:-scale-x-100" />
                     </HeaderButton>
                   )}
+                <button
+                  onClick={() => setDialog({ kind: "profile" })}
+                  title="حساب کاربری"
+                  aria-label="حساب کاربری"
+                  className="hidden shrink-0 rounded-full transition-opacity hover:opacity-85 md:block"
+                >
+                  <Avatar user={me} online />
+                </button>
               </div>
             </header>
+
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-ink-900 max-md:rounded-t-[1.75rem] md:rounded-[1.75rem]">
 
             {connection && !canPlayAudio && !deafened && (
               <button
                 onClick={() => startAudio().catch(() => notify("پخش صدا ممکن نشد. دوباره ضربه بزنید"))}
-                className="flex shrink-0 items-center justify-center gap-2 border-b border-white/5 bg-accent-strong px-3 py-2.5 text-sm font-semibold text-white select-none"
+                className="flex shrink-0 items-center justify-center gap-2 bg-accent-strong px-3 py-2.5 text-sm font-semibold text-on-accent select-none"
               >
                 <VolumeX className="size-4 shrink-0" />
                 مرورگر صدای تماس را متوقف کرده است. برای شنیدن ضربه بزنید
@@ -843,7 +880,7 @@ export default function App({
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               {!servers.length && !dmMode ? (
-                <EmptyState onAdd={() => setDialog({ kind: "server" })} />
+                <EmptyState onAdd={() => setDialog({ kind: "server" })} onDiscover={() => setDialog({ kind: "discover" })} />
               ) : dmMode && !activeDm ? (
                 <NoConversation onFriends={() => setDialog({ kind: "friends" })} />
               ) : channel?.type === "text" ? (
@@ -855,7 +892,10 @@ export default function App({
                   members={currentDetail?.members ?? dmMembers}
                   online={onlineNow}
                   dm={activeDm?.peer}
+                  rulesPending={!!currentDetail?.onboarding.rulesPending}
                   onOpenProfile={openProfile}
+                  onOpenWelcome={() => setDialog({ kind: "welcome" })}
+                  onNotify={notify}
                 />
               ) : channel?.type === "voice" ? (
                 <VoiceView
@@ -870,6 +910,7 @@ export default function App({
               ) : (
                 <div className="bg-glow flex-1" />
               )}
+            </div>
             </div>
           </main>
 
@@ -892,6 +933,35 @@ export default function App({
         </div>
 
         {dialog?.kind === "server" && <ServerDialog onClose={() => setDialog(null)} onDone={addServer} />}
+        {dialog?.kind === "discover" && (
+          <DiscoverDialog
+            onClose={() => setDialog(null)}
+            onJoined={addServer}
+            onOpen={(id) => {
+              setDialog(null);
+              selectServer(id);
+            }}
+          />
+        )}
+        {dialog?.kind === "welcome" && currentDetail && (
+          <WelcomeDialog
+            server={currentDetail.server}
+            welcome={currentDetail.welcome}
+            channels={currentDetail.channels}
+            onboarding={currentDetail.onboarding}
+            onClose={() => setDialog(null)}
+            onDone={(channelId) => {
+              setDialog(null);
+              setDetail((d) => (d ? { ...d, onboarding: { welcomePending: false, rulesPending: false } } : d));
+              // A reload also fetches the rule-keeper badge the server just granted.
+              setReloadKey((k) => k + 1);
+              if (channelId) {
+                lastChannelByServer.current[currentDetail.server.id] = channelId;
+                setActiveChannelId(channelId);
+              }
+            }}
+          />
+        )}
         {dialog?.kind === "profile" && (
           <ProfileDialog
             me={me}
@@ -909,6 +979,9 @@ export default function App({
           <ServerSettingsDialog
             server={currentDetail.server}
             members={currentDetail.members}
+            channels={currentDetail.channels}
+            discovery={currentDetail.discovery}
+            welcome={currentDetail.welcome}
             meId={me.id}
             onClose={() => setDialog(null)}
             onChanged={(d) => {
@@ -965,6 +1038,7 @@ export default function App({
         {dialog?.kind === "editChannel" && currentDetail?.channels.some((c) => c.id === dialog.channelId) && (
           <EditChannelDialog
             channel={currentDetail.channels.find((c) => c.id === dialog.channelId)!}
+            members={currentDetail.members}
             onClose={() => setDialog(null)}
             onNotify={notify}
           />
@@ -972,6 +1046,7 @@ export default function App({
         {dialog?.kind === "channel" && currentDetail && (
           <CreateChannelDialog
             serverId={currentDetail.server.id}
+            members={currentDetail.members}
             type={dialog.type}
             onClose={() => setDialog(null)}
             onDone={(c) => {
@@ -997,14 +1072,14 @@ export default function App({
               <span dir="auto" className="block truncate text-xs text-muted">
                 {pingToast.preview}
               </span>
-              <span className="block truncate text-[11px] text-muted/80">
+              <span className="block truncate text-xs text-muted/80">
                 #{pingToast.channelName} · {pingToast.serverName}
               </span>
             </span>
           </button>
         )}
         {toast && (
-          <div className="fixed top-[calc(env(safe-area-inset-top)+4.5rem)] left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl bg-ink-800/95 px-4 py-2.5 text-center text-sm leading-6 shadow-2xl ring-1 ring-white/10 backdrop-blur">
+          <div className="surface-float animate-drop-in fixed top-[calc(env(safe-area-inset-top)+4.5rem)] left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl px-4 py-2.5 text-center text-sm leading-6" role="status">
             {toast}
           </div>
         )}
@@ -1035,7 +1110,7 @@ function HeaderButton({
       aria-label={label}
       onClick={onClick}
       className={cn(
-        "relative grid size-10 shrink-0 place-items-center rounded-xl text-muted transition hover:bg-ink-800 hover:text-fg active:bg-ink-800",
+        "relative grid size-10 shrink-0 place-items-center rounded-full text-fg/80 transition-colors duration-150 hover:bg-ink-800 hover:text-fg active:bg-ink-700 md:bg-ink-900",
         className,
       )}
     >
@@ -1048,14 +1123,14 @@ function NoConversation({ onFriends }: { onFriends: () => void }) {
   return (
     <div className="bg-glow grid flex-1 place-items-center p-6 text-center">
       <div className="max-w-sm">
-        <span className="mx-auto grid size-20 place-items-center rounded-3xl bg-accent-strong text-white shadow-2xl shadow-accent-strong/40">
+        <span className="mx-auto grid size-20 place-items-center rounded-full bg-accent-strong text-on-accent">
           <MessageCircle className="size-9" />
         </span>
         <h2 className="mt-6 text-xl font-bold">پیام مستقیم</h2>
         <p className="mt-2 text-sm leading-6 text-muted">با دوستانتان و اعضای سرورهایتان خصوصی گفت‌وگو کنید. روی نام کسی بزنید و «ارسال پیام» را انتخاب کنید.</p>
         <button
           onClick={onFriends}
-          className="mt-6 rounded-xl bg-accent-strong px-6 py-3 font-semibold text-white shadow-lg shadow-accent-strong/30 hover:bg-accent"
+          className="btn-primary mt-6 px-6"
         >
           دوستان من
         </button>
@@ -1064,20 +1139,24 @@ function NoConversation({ onFriends }: { onFriends: () => void }) {
   );
 }
 
-function EmptyState({ onAdd }: { onAdd: () => void }) {
+function EmptyState({ onAdd, onDiscover }: { onAdd: () => void; onDiscover: () => void }) {
   return (
     <div className="bg-glow grid flex-1 place-items-center p-6 text-center">
       <div className="max-w-sm">
-        <span className="mx-auto grid size-20 place-items-center rounded-3xl bg-accent-strong text-white shadow-2xl shadow-accent-strong/40">
+        <span className="mx-auto grid size-20 place-items-center rounded-full bg-accent-strong text-on-accent">
           <Users className="size-9" />
         </span>
         <h2 className="mt-6 text-xl font-bold">هنوز عضو هیچ سروری نیستید</h2>
         <p className="mt-2 text-sm leading-6 text-muted">یک سرور بسازید و دوستانتان را دعوت کنید، یا با لینک دعوت به سرور آن‌ها بپیوندید.</p>
         <button
           onClick={onAdd}
-          className="mt-6 rounded-xl bg-accent-strong px-6 py-3 font-semibold text-white shadow-lg shadow-accent-strong/30 hover:bg-accent"
+          className="btn-primary mt-6 px-6"
         >
           ساختن یا پیوستن
+        </button>
+        <button onClick={onDiscover} className="mt-3 inline-flex items-center gap-2 text-sm text-accent hover:underline">
+          <Compass className="size-4" />
+          کاوش سرورهای عمومی
         </button>
       </div>
     </div>

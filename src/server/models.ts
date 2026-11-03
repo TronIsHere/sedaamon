@@ -38,16 +38,40 @@ const serverSchema = new Schema(
     name: { type: String, required: true },
     owner: { type: ObjectId, ref: "User", required: true },
     inviteCode: { type: String, required: true, unique: true },
+    // Listing in the public directory. Only listed servers can be found and joined without an invite link.
+    isPublic: { type: Boolean, default: false },
+    description: { type: String, default: "" },
+    category: { type: String, default: "other" },
+    tags: { type: [String], default: [] },
+    listedAt: { type: Date, default: null },
+    // What a new member sees on joining. Existing members are never asked to accept rules retroactively.
+    welcome: {
+      enabled: { type: Boolean, default: false },
+      title: { type: String, default: "" },
+      message: { type: String, default: "" },
+      rules: { type: [String], default: [] },
+      requireRules: { type: Boolean, default: false },
+      // Channels shown to newcomers; the private ones among them are opened to each new member.
+      channels: { type: [{ type: ObjectId, ref: "Channel" }], default: [] },
+    },
   },
   { timestamps: true },
 );
+serverSchema.index({ isPublic: 1, category: 1 });
 
 const memberSchema = new Schema(
   {
     server: { type: ObjectId, ref: "Server", required: true },
     user: { type: ObjectId, ref: "User", required: true, index: true },
-    role: { type: String, enum: ["owner", "admin", "member"], default: "member" },
+    role: { type: String, enum: ["owner", "admin", "moderator", "organizer", "channel_manager", "member"], default: "member" },
     mutedUntil: { type: Date, default: null },
+    // How the person got in; "discovery" earns the explorer badge.
+    joinedVia: { type: String, enum: ["owner", "invite", "discovery"], default: "invite" },
+    // Set when the server had a welcome screen at the moment they joined, until they dismiss it.
+    welcomePending: { type: Boolean, default: false },
+    // Set while the server's rules are still to be accepted; a member in this state can read but not write.
+    rulesPending: { type: Boolean, default: false },
+    rulesAcceptedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
@@ -59,6 +83,10 @@ const channelSchema = new Schema(
     name: { type: String, required: true },
     type: { type: String, enum: ["text", "voice"], required: true },
     position: { type: Number, default: 0 },
+    // A private channel is hidden from everyone but those who see every private channel, these roles and these people.
+    isPrivate: { type: Boolean, default: false },
+    allowedRoles: { type: [String], default: [] },
+    allowedMembers: { type: [{ type: ObjectId, ref: "User" }], default: [] },
   },
   { timestamps: true },
 );
@@ -69,7 +97,16 @@ const messageSchema = new Schema(
     author: { type: ObjectId, ref: "User", required: true },
     content: { type: String, required: true },
     editedAt: { type: Date, default: null },
+    // Set while the message is pinned to its channel.
+    pinnedAt: { type: Date, default: null },
+    // A built-in sticker id ("pack/name"); the content then holds the sticker's text.
+    sticker: { type: String, default: null },
     replyTo: { type: ObjectId, ref: "Message", default: null },
+    // Where a forwarded message came from. Names are copied so the note survives renames, deletions and private channels.
+    forwardedFrom: {
+      type: new Schema({ author: { type: ObjectId, ref: "User", default: null }, authorName: String, source: String }, { _id: false }),
+      default: null,
+    },
     // People pinged with "@name", and whether the whole server was pinged with "@everyone".
     mentions: { type: [{ type: ObjectId, ref: "User" }], default: [] },
     mentionEveryone: { type: Boolean, default: false },

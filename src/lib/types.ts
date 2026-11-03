@@ -1,5 +1,5 @@
 export type ChannelType = "text" | "voice";
-export type Role = "owner" | "admin" | "member";
+export type Role = "owner" | "admin" | "moderator" | "organizer" | "channel_manager" | "member";
 
 /** What a person chose to show next to their name. Whether they are connected is tracked separately. */
 export type Status = "available" | "busy" | "away" | "gaming";
@@ -35,13 +35,24 @@ export interface ChannelDTO {
   name: string;
   type: ChannelType;
   position: number;
+  /** A private channel is only seen by those who may view private channels, the roles and the people it lists. */
+  isPrivate: boolean;
+  /** Roles let into a private channel, besides the ones that see every private channel. Empty for public ones. */
+  allowedRoles: Role[];
+  /** Ids of members let into a private channel by name. Empty for public ones. */
+  allowedMembers: string[];
 }
+
+/** Achievements shown next to a member (see lib/badges). */
+export type BadgeId = "newcomer" | "rule_keeper" | "explorer";
 
 export interface MemberDTO {
   user: UserDTO;
   role: Role;
   /** While in the future, the member can read but not write. */
   mutedUntil: string | null;
+  joinedAt: string;
+  badges: BadgeId[];
 }
 
 export interface ReactionDTO {
@@ -63,12 +74,26 @@ export interface MentionDTO {
   name: string;
 }
 
+/** The "originally from" note on a forwarded message. */
+export interface ForwardedDTO {
+  /** Null once the author's account is gone; the name is still shown. */
+  authorId: string | null;
+  authorName: string;
+  /** «سرور · #کانال», or «پیام مستقیم». */
+  source: string;
+}
+
 export interface MessageDTO {
   id: string;
   channelId: string;
   content: string;
   createdAt: string;
   editedAt: string | null;
+  forwardedFrom: ForwardedDTO | null;
+  /** When the message was pinned to its channel, or null if it isn't. */
+  pinnedAt: string | null;
+  /** A built-in sticker id (see lib/stickers); `content` then holds the sticker's text. */
+  sticker: string | null;
   author: UserDTO;
   replyTo: ReplyDTO | null;
   mentions: MentionDTO[];
@@ -158,6 +183,50 @@ export type VoiceParticipant = UserDTO;
 /** channelId → people currently in that voice channel */
 export type VoiceStates = Record<string, VoiceParticipant[]>;
 
+/** How a server shows up in the public directory. */
+export interface DiscoverySettingsDTO {
+  isPublic: boolean;
+  description: string;
+  category: string;
+  tags: string[];
+}
+
+/** One card of the public directory. */
+export interface DiscoverServerDTO {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  tags: string[];
+  memberCount: number;
+  /** Whether the person asking is already inside. */
+  joined: boolean;
+}
+
+export interface DiscoverDTO {
+  servers: DiscoverServerDTO[];
+  total: number;
+  /** Servers per category among those matching the search (ignoring the chosen category), for the filter chips. */
+  categories: Record<string, number>;
+}
+
+/** What a newcomer is shown on joining. */
+export interface WelcomeDTO {
+  enabled: boolean;
+  title: string;
+  message: string;
+  rules: string[];
+  requireRules: boolean;
+  /** Channels to point newcomers at, in order. */
+  channelIds: string[];
+}
+
+/** Where the person asking stands in the server's welcome flow. */
+export interface OnboardingDTO {
+  welcomePending: boolean;
+  rulesPending: boolean;
+}
+
 export interface ServerDetailDTO {
   server: ServerDTO;
   channels: ChannelDTO[];
@@ -167,6 +236,15 @@ export interface ServerDetailDTO {
   online: string[];
   /** Upcoming and just-started events. */
   events: EventDTO[];
+  discovery: DiscoverySettingsDTO;
+  welcome: WelcomeDTO;
+  onboarding: OnboardingDTO;
+}
+
+/** Where a message can be forwarded to: text channels the person can write in, and people they may message. */
+export interface ForwardTargetsDTO {
+  servers: { id: string; name: string; channels: { id: string; name: string }[] }[];
+  people: UserDTO[];
 }
 
 export type FriendState = "none" | "friends" | "incoming" | "outgoing";

@@ -22,6 +22,8 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
   assertCanWrite(scope.member);
   const existing = await loadMessage(id, messageId);
   if (String(existing.author) !== String(user._id)) throw new HttpError(403, "فقط نویسندهٔ پیام می‌تواند آن را ویرایش کند");
+  if (existing.sticker) throw new HttpError(400, "استیکر را نمی‌شود ویرایش کرد");
+  if (existing.forwardedFrom) throw new HttpError(400, "پیام فوروارد‌شده را نمی‌شود ویرایش کرد");
 
   const { content } = z.object({ content: z.string() }).parse(await req.json());
   const text = content.trim();

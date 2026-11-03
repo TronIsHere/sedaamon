@@ -189,7 +189,7 @@ export default function VoiceControls({
         <ControlButton
           className={cn(
             size,
-            "bg-danger text-white shadow-lg shadow-danger/30 hover:bg-danger/85",
+            "bg-danger-strong text-white shadow-lg shadow-danger-strong/30 hover:bg-danger-strong/85",
             compact && "ms-auto",
           )}
           label="قطع اتصال"
@@ -229,8 +229,8 @@ export function ControlButton({
         off
           ? "bg-danger/15 text-danger"
           : active
-            ? "bg-accent-strong text-white shadow-lg shadow-accent-strong/30"
-            : "bg-ink-800 text-fg ring-1 ring-white/5 hover:bg-ink-700",
+            ? "bg-accent-strong text-on-accent"
+            : "bg-ink-700 text-fg hover:bg-ink-600",
         className,
       )}
     >

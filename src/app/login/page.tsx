@@ -15,7 +15,7 @@ export default async function LoginPage({ searchParams }: PageProps<"/login">) {
   if (user?.name) redirect(next);
 
   return (
-    <main className="bg-glow grid min-h-full place-items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-safe-4">
+    <main className="grid bg-ink-950 min-h-full place-items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-safe-4">
       <LoginForm next={next} startWithName={!!user} />
     </main>
   );

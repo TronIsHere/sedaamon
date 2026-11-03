@@ -118,3 +118,19 @@ export async function closeVoiceRooms(channelIds: string[]) {
     ),
   );
 }
+
+/** Disconnects people from voice rooms they may no longer be in, as `[channelId, userIds]` pairs. */
+export async function removeFromVoice(pairs: [channelId: string, userIds: string[]][]) {
+  const work = pairs.filter(([, ids]) => ids.length);
+  if (!work.length) return;
+  const client = new RoomServiceClient(internalUrl(), apiKey(), apiSecret());
+  await Promise.all(
+    work.flatMap(([channelId, ids]) =>
+      ids.map((id) =>
+        client.removeParticipant(roomName(channelId), id).catch(() => {
+          // Not connected right now, which is just as good.
+        }),
+      ),
+    ),
+  );
+}

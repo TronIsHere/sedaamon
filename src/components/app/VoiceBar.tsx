@@ -20,7 +20,7 @@ export default function VoiceBar({
   const { isMicrophoneEnabled, error, toggleMic } = useVoiceToggles(settings);
 
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-white/5 bg-accent-strong/10 px-3 py-1.5 select-none md:hidden">
+    <div className="flex shrink-0 items-center gap-2 bg-accent-strong/10 px-3 py-1.5 select-none md:hidden">
       <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-2 text-start">
         <Signal className="size-4 shrink-0 text-accent" />
         <span className="min-w-0 text-xs leading-5">
@@ -40,7 +40,7 @@ export default function VoiceBar({
       >
         {isMicrophoneEnabled ? <Mic className="size-4" /> : <MicOff className="size-4" />}
       </ControlButton>
-      <ControlButton className="size-9 bg-danger/90 text-white hover:bg-danger" label="قطع اتصال" onClick={onLeave}>
+      <ControlButton className="size-9 bg-danger-strong text-white hover:bg-danger-strong" label="قطع اتصال" onClick={onLeave}>
         <PhoneOff className="size-4" />
       </ControlButton>
     </div>

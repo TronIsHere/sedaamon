@@ -6,8 +6,9 @@ import { can, type Permission } from "@/lib/permissions";
 import { DM_SCOPE, type Role } from "@/lib/types";
 import { connectDB } from "./db";
 import { HttpError } from "./errors";
+import { channelAudience, memberCanView } from "./access";
 import { Channel, Conversation, Member } from "./models";
-import { emitToServer, emitToUsers } from "./realtime";
+import { emitToAudience, emitToUsers } from "./realtime";
 import { SESSION_COOKIE, userFromToken } from "./session";
 
 export { HttpError };
@@ -58,6 +59,8 @@ export async function requireChannelAccess(channelId: string, userId: Types.Obje
   const channel = await Channel.findById(channelId).lean();
   if (!channel) throw new HttpError(404, "کانال پیدا نشد");
   const member = await requireMember(String(channel.server), userId);
+  // A private channel doesn't admit to existing: to anyone outside it, it is simply not there.
+  if (!memberCanView(channel, member)) throw new HttpError(404, "کانال پیدا نشد");
   return { channel, member };
 }
 
@@ -66,8 +69,10 @@ export interface MessageScope {
   /** The server's id, or `DM_SCOPE` for a direct conversation. */
   serverId: string;
   type: "text" | "voice" | "dm";
+  /** Who may see this channel's messages and pings: ids for a private channel, null when the whole server (or conversation) can. */
+  audience: ReadonlySet<string> | null;
   /** Only server channels have a Member row; in a conversation everyone is an equal "member". */
-  member: { role: Role; mutedUntil?: Date | null };
+  member: { role: Role; mutedUntil?: Date | null; rulesPending?: boolean };
   isDm: boolean;
   /** Sends an event to everyone who can see these messages. */
   emit: (event: string, payload: unknown) => void;
@@ -81,12 +86,15 @@ export async function requireMessageScope(channelId: string, userId: Types.Objec
   if (channel) {
     const serverId = String(channel.server);
     const member = await requireMember(serverId, userId);
+    if (!memberCanView(channel, member)) throw new HttpError(404, "کانال پیدا نشد");
+    const audience = await channelAudience(channel);
     return {
       serverId,
       type: channel.type,
-      member: { role: member.role as Role, mutedUntil: member.mutedUntil },
+      member: { role: member.role as Role, mutedUntil: member.mutedUntil, rulesPending: !!member.rulesPending },
       isDm: false,
-      emit: (event, payload) => emitToServer(serverId, event, payload),
+      audience: audience && new Set(audience),
+      emit: (event, payload) => emitToAudience(serverId, audience, event, payload),
       touch: async () => {},
     };
   }
@@ -99,14 +107,16 @@ export async function requireMessageScope(channelId: string, userId: Types.Objec
     type: "dm",
     member: { role: "member", mutedUntil: null },
     isDm: true,
+    audience: null,
     emit: (event, payload) => emitToUsers(people, event, payload),
     touch: () => Conversation.updateOne({ _id: channelId }, { lastMessageAt: new Date() }),
   };
 }
 
-/** Muted members can read but not write: no messages, edits or reactions. */
-export function assertCanWrite(member: { mutedUntil?: Date | null }) {
+/** Muted members, and newcomers who haven't accepted the rules yet, can read but not write: no messages, edits or reactions. */
+export function assertCanWrite(member: { mutedUntil?: Date | null; rulesPending?: boolean }) {
   if (member.mutedUntil && member.mutedUntil.getTime() > Date.now()) throw new HttpError(403, "شما در این سرور بی‌صدا شده‌اید");
+  if (member.rulesPending) throw new HttpError(403, "برای شرکت در گفت‌وگو، ابتدا قوانین سرور را بپذیرید");
 }
 
 export function assertPermission(member: { role: string }, permission: Permission, message = "اجازهٔ این کار را ندارید") {

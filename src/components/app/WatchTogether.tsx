@@ -292,7 +292,7 @@ export function WatchPanel() {
   const mine = () => Date.now() > echoUntil.current;
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-3xl bg-ink-900/80 p-3 ring-1 ring-white/5" aria-label="تماشای هم‌زمان">
+    <section className="flex min-h-0 flex-1 flex-col gap-2 rounded-3xl bg-ink-900/80 p-3 ring-1 ring-line" aria-label="تماشای هم‌زمان">
       <div className="flex items-center gap-2 px-1">
         <FileVideo className="size-4 shrink-0 text-accent" />
         <div className="min-w-0 flex-1 leading-5">
@@ -314,13 +314,13 @@ export function WatchPanel() {
       </div>
 
       {!local ? (
-        <div className="grid flex-1 place-items-center rounded-2xl bg-ink-950 p-6 text-center">
+        <div className="grid flex-1 place-items-center rounded-2xl bg-ink-850 p-6 text-center">
           <div className="max-w-sm">
             <FileVideo className="mx-auto size-10 text-accent" />
             <p className="mt-3 text-sm leading-7">
               برای تماشای هم‌زمان، <b dir="auto">{session.name}</b> را از روی دستگاه خودتان انتخاب کنید. فایل باید همان فایلی باشد که {session.startedBy.name} انتخاب کرده است.
             </p>
-            <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-accent-strong px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-accent-strong/30 hover:bg-accent">
+            <label className="mt-4 inline-flex cursor-pointer items-center gap-2 rounded-xl bg-accent-strong px-5 py-2.5 text-sm font-semibold text-on-accent hover:bg-accent">
               انتخاب فایل
               <input type="file" accept="video/*" className="sr-only" onChange={(e) => e.target.files?.[0] && join(e.target.files[0])} />
             </label>
@@ -351,7 +351,7 @@ export function WatchPanel() {
               className="absolute inset-0 grid place-items-center bg-black/60 text-white"
               dir="rtl"
             >
-              <span className="flex items-center gap-2 rounded-full bg-accent-strong px-5 py-3 font-semibold shadow-xl">
+              <span className="flex items-center gap-2 rounded-full bg-accent-strong px-5 py-3 font-semibold text-on-accent shadow-xl">
                 <Play className="size-5" />
                 برای پخش بزنید
               </span>
@@ -366,7 +366,7 @@ export function WatchPanel() {
           {problem ?? "این فایل با فایل اشتراکی یکی به نظر نمی‌رسد (اندازه یا مدت‌زمان فرق دارد) و ممکن است هماهنگ پخش نشود."}
         </p>
       )}
-      <p className="px-1 text-[11px] leading-5 text-muted">صدای فیلم از دستگاه خودتان پخش می‌شود. برای جلوگیری از پژواک در تماس، از هدفون استفاده کنید.</p>
+      <p className="px-1 text-xs leading-5 text-muted">صدای فیلم از دستگاه خودتان پخش می‌شود. برای جلوگیری از پژواک در تماس، از هدفون استفاده کنید.</p>
     </section>
   );
 }

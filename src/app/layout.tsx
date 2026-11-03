@@ -24,7 +24,7 @@ export const viewport: Viewport = {
   viewportFit: "cover",
   // On Android the layout shrinks above the on-screen keyboard, so the message box stays visible.
   interactiveWidget: "resizes-content",
-  themeColor: "#08080b",
+  themeColor: "#000000",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

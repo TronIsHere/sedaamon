@@ -2,11 +2,12 @@
 
 import { useState } from "react";
 import { useParticipants } from "@livekit/components-react";
-import { CalendarClock, ChevronDown, Hash, Link2, Loader2, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
+import { CalendarClock, ChevronDown, Hash, Link2, Loader2, Lock, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { can } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
+import { foldForSearch, matchesSearch } from "@/lib/search";
 import { statusLine } from "@/lib/status";
 import { formatAgo } from "@/lib/format";
 import type { ChannelDTO, ChannelType, DmDTO, MeDTO, ServerDetailDTO, VoiceStates } from "@/lib/types";
@@ -63,9 +64,9 @@ export default function ChannelSidebar({
   const live = new Map(roomParticipants.map((p) => [p.identity, p]));
 
   const [query, setQuery] = useState("");
-  const q = query.trim().toLowerCase();
-  const matches = (c: ChannelDTO) => !q || c.name.toLowerCase().includes(q);
-  const dmMatches = (d: DmDTO) => !q || d.peer.name.toLowerCase().includes(q);
+  const q = foldForSearch(query.trim());
+  const matches = (c: ChannelDTO) => matchesSearch(c.name, q);
+  const dmMatches = (d: DmDTO) => matchesSearch(d.peer.name, q);
 
   const canManage = !!detail && can(detail.server.role, "channel:manage");
   const text = detail?.channels.filter((c) => c.type === "text" && matches(c)) ?? [];
@@ -75,9 +76,9 @@ export default function ChannelSidebar({
     : 0;
 
   return (
-    <div className="flex w-[17rem] flex-col border-e border-white/5 bg-ink-900 max-md:w-[calc(100vw-72px-3rem)] max-md:max-w-[17rem]">
-      <div className="flex h-16 shrink-0 items-center gap-2 px-4">
-        <h1 className="truncate text-lg font-bold">{dm ? "پیام‌های مستقیم" : (detail?.server.name ?? "صدامون")}</h1>
+    <div className="flex w-[17.5rem] flex-col gap-2 bg-ink-950 max-md:w-[calc(100vw-76px-3rem)] max-md:max-w-[17.5rem] max-md:px-2 max-md:pt-2">
+      <div className="flex h-14 shrink-0 items-center gap-2 ps-3 pe-1">
+        <h1 className="truncate text-2xl font-extrabold tracking-tight">{dm ? "پیام‌های مستقیم" : (detail?.server.name ?? "صدامون")}</h1>
         {!dm && newCount > 0 && (
           <span className="shrink-0 text-xs font-semibold text-accent">{toPersianDigits(newCount)} جدید</span>
         )}
@@ -86,7 +87,7 @@ export default function ChannelSidebar({
             onClick={dm.onNew}
             title="پیام تازه"
             aria-label="پیام تازه"
-            className="ms-auto rounded-lg p-2 text-accent hover:bg-ink-800 active:bg-ink-800 md:p-1.5"
+            className="ms-auto grid size-10 shrink-0 place-items-center rounded-full bg-ink-900 text-fg transition-colors hover:bg-ink-800 active:bg-ink-700"
           >
             <MessageSquarePlus className="size-[18px]" />
           </button>
@@ -96,7 +97,7 @@ export default function ChannelSidebar({
             onClick={() => shareInvite(detail.server, onNotify)}
             title="لینک دعوت"
             aria-label="لینک دعوت"
-            className="ms-auto rounded-lg p-2 text-accent hover:bg-ink-800 active:bg-ink-800 md:p-1.5"
+            className="ms-auto grid size-10 shrink-0 place-items-center rounded-full bg-ink-900 text-fg transition-colors hover:bg-ink-800 active:bg-ink-700"
           >
             <Link2 className="size-[18px]" />
           </button>
@@ -105,19 +106,19 @@ export default function ChannelSidebar({
 
       {!dm && detail && <EventsEntry detail={detail} onClick={onEvents} />}
 
-      <div className="px-3 pb-2">
-        <label className="flex items-center gap-2 rounded-xl bg-ink-950 px-3 ring-1 ring-white/5 transition focus-within:ring-accent/60">
+      <div>
+        <label className="flex items-center gap-2 rounded-full bg-ink-900 px-4 transition focus-within:ring-2 focus-within:ring-accent/70">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder={dm ? "جست‌وجوی گفت‌وگو…" : "جست‌وجوی کانال…"}
-            className="min-w-0 flex-1 bg-transparent py-2.5 text-sm outline-none placeholder:text-muted/70"
+            aria-label={dm ? "جست‌وجوی گفت‌وگو" : "جست‌وجوی کانال"} className="min-w-0 flex-1 bg-transparent py-2.5 text-sm outline-none placeholder:text-muted"
           />
           <Search className="size-4 shrink-0 text-muted" />
         </label>
       </div>
 
-      <div className="scrollbar-thin flex-1 space-y-5 overflow-y-auto px-3 py-3">
+      <div className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto">
         {dm ? (
           <DmList dm={dm} conversations={dm.conversations.filter(dmMatches)} unread={unread} searching={!!q} />
         ) : !detail ? (
@@ -130,7 +131,7 @@ export default function ChannelSidebar({
                 const pinged = c.id === activeChannelId ? 0 : (unread[c.id]?.mentions ?? 0);
                 return (
                   <ChannelButton key={c.id} active={c.id === activeChannelId} onClick={() => onSelect(c)}>
-                    <Hash className="size-4 shrink-0 opacity-70" />
+                    {c.isPrivate ? <Lock className="size-4 shrink-0 opacity-70" aria-label="کانال خصوصی" /> : <Hash className="size-4 shrink-0 opacity-70" />}
                     <span className={cn("truncate", count > 0 && "font-semibold text-fg")}>{c.name}</span>
                     {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="ms-auto" />}
                   </ChannelButton>
@@ -151,16 +152,17 @@ export default function ChannelSidebar({
                         <Volume2 className={cn("size-4 shrink-0 opacity-70", connectedHere && "text-online opacity-100")} />
                       )}
                       <span className={cn("truncate", people.length > 0 && "font-semibold text-fg")}>{c.name}</span>
+                      {c.isPrivate && <Lock className="size-3 shrink-0 opacity-60" aria-label="کانال خصوصی" />}
                       {people.length > 0 && (
-                        <span className="ms-auto text-[11px] text-muted">{toPersianDigits(people.length)}</span>
+                        <span className="ms-auto text-xs text-muted">{toPersianDigits(people.length)}</span>
                       )}
                     </ChannelButton>
                     {people.length > 0 && (
-                      <ul className="ms-5 space-y-0.5 border-s border-white/5 py-1 ps-2">
+                      <ul className="ms-4 space-y-0.5 py-1 ps-2">
                         {people.map((p) => {
                           const lp = connectedHere ? live.get(p.id) : undefined;
                           return (
-                            <li key={p.id} className="flex items-center gap-2 rounded-lg px-2 py-1 text-sm text-muted">
+                            <li key={p.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-muted">
                               <Avatar user={p} size="sm" speaking={lp?.isSpeaking} />
                               <span className={cn("truncate", lp?.isSpeaking && "text-fg")}>{p.name}</span>
                               {lp && !lp.isMicrophoneEnabled && <MicOff className="ms-auto size-3.5 shrink-0 text-danger/80" />}
@@ -179,7 +181,7 @@ export default function ChannelSidebar({
       </div>
 
       {connection && (
-        <div className="mx-3 mb-2 rounded-2xl bg-ink-850 p-3 ring-1 ring-white/5">
+        <div className="rounded-[1.75rem] bg-ink-900 p-3 ring-1 ring-online/25">
           <div className="flex items-center gap-2.5">
             <span className="grid size-8 shrink-0 place-items-center rounded-full bg-online/15 text-online">
               <Volume2 className="size-4" />
@@ -199,7 +201,7 @@ export default function ChannelSidebar({
 
       <button
         onClick={onProfile}
-        className="group flex items-center gap-3 border-t border-white/5 px-4 pt-3 pb-safe-4 text-start hover:bg-ink-850"
+        className="group mb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center gap-3 rounded-[1.75rem] bg-ink-900 px-3 py-2.5 text-start transition-colors hover:bg-ink-800 md:mb-0"
       >
         <Avatar user={me} online />
         <span className="min-w-0 flex-1 text-sm leading-5">
@@ -221,12 +223,12 @@ function EventsEntry({ detail, onClick }: { detail: ServerDetailDTO; onClick: ()
   if (!next && !can(detail.server.role, "event:manage")) return null;
   const running = !!next && isRunning(next, now);
   return (
-    <div className="px-3 pb-2">
+    <div>
       <button
         onClick={onClick}
         className={cn(
-          "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-start text-sm ring-1 transition hover:bg-ink-850",
-          running ? "bg-online/10 ring-online/30" : "bg-ink-950 ring-white/5",
+          "flex w-full items-center gap-3 rounded-[1.75rem] px-4 py-3 text-start text-sm transition-colors",
+          running ? "bg-online/10 ring-1 ring-online/30 hover:bg-online/15" : "bg-ink-900 hover:bg-ink-800",
         )}
       >
         <CalendarClock className={cn("size-4 shrink-0", running ? "text-online" : "text-accent")} />
@@ -269,14 +271,14 @@ function DmList({
     );
   }
   return (
-    <ul className="space-y-0.5">
+    <ul className="space-y-2">
       {conversations.map((c) => {
         const count = c.id === dm.activeId ? 0 : (unread[c.id]?.count ?? 0);
         const online = !!dm.online[c.peer.id];
         const line = (online && statusLine(c.peer)) || (c.lastMessageAt ? formatAgo(c.lastMessageAt) : "");
         return (
           <li key={c.id}>
-            <ChannelButton active={c.id === dm.activeId} onClick={() => dm.onSelect(c)}>
+            <ChannelButton card active={c.id === dm.activeId} onClick={() => dm.onSelect(c)}>
               <Avatar user={c.peer} online={online} />
               <span className="min-w-0 flex-1 leading-5">
                 <span className={cn("block truncate", count > 0 && "font-semibold text-fg")}>{c.peer.name}</span>
@@ -322,38 +324,45 @@ function Section({
 }) {
   const [open, setOpen] = useState(true);
   return (
-    <section>
-      <div className="mb-1.5 flex items-center justify-between px-1 text-xs font-semibold text-muted">
-        <button onClick={() => setOpen(!open)} className="flex items-center gap-1 hover:text-fg" aria-expanded={open}>
-          <ChevronDown className={cn("size-3.5 transition-transform", !open && "ltr:-rotate-90 rtl:rotate-90")} />
+    <section className="rounded-[1.75rem] bg-ink-900 px-2 py-2.5">
+      <div className="flex items-center justify-between ps-2 pe-0.5">
+        <button onClick={() => setOpen(!open)} className="flex min-h-9 items-center gap-1.5 rounded-lg text-[15px] font-semibold text-fg transition-colors hover:text-accent" aria-expanded={open}>
           {title}
+          <ChevronDown className={cn("size-4 text-muted transition-transform", !open && "ltr:-rotate-90 rtl:rotate-90")} />
         </button>
         {canAdd && (
-          <button onClick={onAdd} title="ساختن کانال" aria-label="ساختن کانال" className="-m-1.5 p-1.5 text-accent hover:text-fg">
-            <Plus className="size-4" />
+          <button onClick={onAdd} title="ساختن کانال" aria-label="ساختن کانال" className="grid size-9 place-items-center rounded-full text-fg transition-colors hover:bg-ink-800">
+            <Plus className="size-5" />
           </button>
         )}
       </div>
-      {open && <div className="space-y-0.5">{children}</div>}
+      {open && <div className="mt-1 space-y-0.5">{children}</div>}
     </section>
   );
 }
 
+/** A channel row inside a section card, or (`card`) a conversation that is its own card. */
 function ChannelButton({
   active,
+  card,
   onClick,
   children,
 }: {
   active: boolean;
+  card?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
   return (
     <button
       onClick={onClick}
+      aria-current={active ? "true" : undefined}
       className={cn(
-        "flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-start text-sm transition md:py-2",
-        active ? "bg-ink-800 font-semibold text-fg" : "text-muted hover:bg-ink-850 hover:text-fg active:bg-ink-850",
+        "relative flex w-full items-center gap-2.5 text-start text-sm transition-colors duration-150",
+        card ? "min-h-14 rounded-[1.25rem] px-3 py-2.5" : "min-h-11 rounded-xl px-3 py-2 md:min-h-10",
+        active
+          ? "bg-ink-700 font-semibold text-fg"
+          : cn("text-fg/80 hover:bg-ink-800 hover:text-fg active:bg-ink-700", card && "bg-ink-900"),
       )}
     >
       {children}

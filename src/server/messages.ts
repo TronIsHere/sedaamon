@@ -10,6 +10,9 @@ export interface MessageDoc {
   content: string;
   createdAt: Date;
   editedAt?: Date | null;
+  pinnedAt?: Date | null;
+  sticker?: string | null;
+  forwardedFrom?: { author?: Types.ObjectId | null; authorName?: string | null; source?: string | null } | null;
   replyTo?: Types.ObjectId | null;
   mentions?: Types.ObjectId[];
   mentionEveryone?: boolean;
@@ -17,6 +20,9 @@ export interface MessageDoc {
 }
 
 const PREVIEW_LENGTH = 120;
+
+/** A channel's pin list stays short enough to read. */
+export const MAX_PINS = 50;
 
 export const toReactions = (reactions: MessageDoc["reactions"]): ReactionDTO[] =>
   (reactions ?? []).filter((r) => r.users.length).map((r) => ({ emoji: r.emoji, users: r.users.map(String) }));
@@ -61,6 +67,11 @@ export async function serializeMessages(docs: MessageDoc[]): Promise<MessageDTO[
         content: m.content,
         createdAt: m.createdAt.toISOString(),
         editedAt: m.editedAt ? m.editedAt.toISOString() : null,
+        forwardedFrom: m.forwardedFrom
+          ? { authorId: m.forwardedFrom.author ? String(m.forwardedFrom.author) : null, authorName: m.forwardedFrom.authorName ?? "", source: m.forwardedFrom.source ?? "" }
+          : null,
+        pinnedAt: m.pinnedAt ? m.pinnedAt.toISOString() : null,
+        sticker: m.sticker ?? null,
         author: toUser(author),
         replyTo,
         mentions: (m.mentions ?? []).flatMap((id) => {

@@ -1,6 +1,7 @@
 import { z } from "zod";
-import { canModerate, can } from "@/lib/permissions";
+import { ASSIGNABLE_ROLES, canModerate, can } from "@/lib/permissions";
 import type { Role } from "@/lib/types";
+import { revokeVoiceAccess } from "@/server/channels";
 import { assertId, handle, HttpError, requireMember, requireUser } from "@/server/http";
 import { Member, User } from "@/server/models";
 import { emitToServer, realtime, serverRoom, userRoom } from "@/server/realtime";
@@ -11,7 +12,7 @@ type Ctx = RouteContext<"/api/servers/[id]/members/[userId]">;
 const MAX_MUTE_MINUTES = 60 * 24 * 28;
 
 /**
- * Change a member's role (owner only) or mute/unmute them (admins and the owner, for people ranked below them).
+ * Change a member's role to admin, one of the custom roles or plain member (owner only) or mute/unmute them (admins and the owner, for people ranked below them).
  */
 export const PATCH = handle(async (req, ctx: Ctx) => {
   const actor = await requireUser();
@@ -23,13 +24,14 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
 
   const body = z
     .object({
-      role: z.enum(["admin", "member"]).optional(),
+      role: z.enum(ASSIGNABLE_ROLES).optional(),
       // Minutes to mute for, or null to lift the mute.
       muteMinutes: z.number().int().min(1).max(MAX_MUTE_MINUTES).nullable().optional(),
     })
     .parse(await req.json());
 
   const actorRole = actorMember.role as Role;
+  const previousRole = target.role as Role;
   if (target.role === "owner") throw new HttpError(403, "نقش مالک سرور تغییر نمی‌کند");
 
   if (body.role !== undefined) {
@@ -41,6 +43,8 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
     target.mutedUntil = body.muteMinutes === null ? null : new Date(Date.now() + body.muteMinutes * 60_000);
   }
   await target.save();
+  // Losing a role can mean losing a private room, so anyone still in one is taken out of it.
+  await revokeVoiceAccess(id, String(target.user), previousRole, target.role as Role);
 
   const user = await User.findById(target.user).lean();
   const member = toMember(target, user!);

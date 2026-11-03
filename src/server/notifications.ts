@@ -20,7 +20,8 @@ export async function resolveMentions(scope: MessageScope, authorId: Types.Objec
   if (scope.isDm) return { mentions: [] as Types.ObjectId[], everyone: false };
   const everyone = can(scope.member.role as Role, "message:mention_everyone") && hasMention(text, EVERYONE);
 
-  const wanted = [...new Set(ids)].filter((id) => id !== String(authorId)).slice(0, MAX_MENTIONS);
+  // Someone who can't see a private channel can't be pinged in it.
+  const wanted = [...new Set(ids)].filter((id) => id !== String(authorId) && (!scope.audience || scope.audience.has(id))).slice(0, MAX_MENTIONS);
   if (!wanted.length) return { mentions: [], everyone };
   const members = await Member.find({ server: scope.serverId, user: { $in: wanted } }, { user: 1 }).lean();
   const users = await User.find({ _id: { $in: members.map((m) => m.user) } }, { name: 1 }).lean();
@@ -99,16 +100,16 @@ export async function notifyPings(
   if (ping.replyAuthor) kinds.set(String(ping.replyAuthor), "reply");
   if (ping.everyone) {
     const members = await Member.find({ server: scope.serverId }, { user: 1 }).lean();
-    for (const m of members) kinds.set(String(m.user), "everyone");
+    for (const m of members) if (!scope.audience || scope.audience.has(String(m.user))) kinds.set(String(m.user), "everyone");
   }
   for (const id of ping.mentions) kinds.set(String(id), "mention");
   kinds.delete(author);
   if (!kinds.size) return;
 
-  // A reply only pings someone who is still in the server.
+  // A reply only pings someone who is still in the server, and still allowed to see the channel.
   if (ping.replyAuthor && kinds.get(String(ping.replyAuthor)) === "reply") {
     const stillMember = await Member.exists({ server: scope.serverId, user: ping.replyAuthor });
-    if (!stillMember) kinds.delete(String(ping.replyAuthor));
+    if (!stillMember || (scope.audience && !scope.audience.has(String(ping.replyAuthor)))) kinds.delete(String(ping.replyAuthor));
   }
 
   const preview = message.content.slice(0, PREVIEW_LENGTH);

@@ -1,5 +1,6 @@
 import type { Types } from "mongoose";
-import type { ChannelDTO, MeDTO, MemberDTO, Role, ServerDTO, Status, UserDTO } from "@/lib/types";
+import { NEWCOMER_MS } from "@/lib/badges";
+import type { BadgeId, ChannelDTO, MeDTO, MemberDTO, Role, ServerDTO, Status, UserDTO } from "@/lib/types";
 
 interface UserDoc {
   _id: Types.ObjectId;
@@ -25,13 +26,29 @@ export const toUser = (u: UserDoc): UserDTO => {
 
 export const toMe = (u: UserDoc & { phone: string }): MeDTO => ({ ...toUser(u), phone: u.phone, bio: u.bio ?? "" });
 
-export const toMember = (
-  m: { role: string; mutedUntil?: Date | null },
-  user: UserDoc,
-): MemberDTO => ({
+interface MemberDoc {
+  role: string;
+  mutedUntil?: Date | null;
+  createdAt?: Date;
+  joinedVia?: string | null;
+  rulesAcceptedAt?: Date | null;
+}
+
+/** What a member has earned. Founders and staff already stand out by role, so only plain members are "new". */
+export function badgesOf(m: MemberDoc): BadgeId[] {
+  const badges: BadgeId[] = [];
+  if (m.role === "member" && m.createdAt && Date.now() - m.createdAt.getTime() < NEWCOMER_MS) badges.push("newcomer");
+  if (m.rulesAcceptedAt) badges.push("rule_keeper");
+  if (m.joinedVia === "discovery") badges.push("explorer");
+  return badges;
+}
+
+export const toMember = (m: MemberDoc, user: UserDoc): MemberDTO => ({
   user: toUser(user),
   role: m.role as Role,
   mutedUntil: m.mutedUntil && m.mutedUntil.getTime() > Date.now() ? m.mutedUntil.toISOString() : null,
+  joinedAt: (m.createdAt ?? new Date()).toISOString(),
+  badges: badgesOf(m),
 });
 
 export const toServer = (
@@ -45,10 +62,17 @@ export const toChannel = (c: {
   name: string;
   type: "text" | "voice";
   position: number;
+  isPrivate?: boolean | null;
+  allowedRoles?: string[] | null;
+  allowedMembers?: Types.ObjectId[] | null;
 }): ChannelDTO => ({
   id: String(c._id),
   serverId: String(c.server),
   name: c.name,
   type: c.type,
   position: c.position,
+  isPrivate: !!c.isPrivate,
+  // Channels made before private ones existed have neither list.
+  allowedRoles: c.isPrivate ? ((c.allowedRoles ?? []) as Role[]) : [],
+  allowedMembers: c.isPrivate ? (c.allowedMembers ?? []).map(String) : [],
 });

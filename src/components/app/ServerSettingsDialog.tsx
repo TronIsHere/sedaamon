@@ -6,20 +6,30 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { can } from "@/lib/permissions";
-import type { MemberDTO, ServerDetailDTO, ServerDTO } from "@/lib/types";
+import type { ChannelDTO, DiscoverySettingsDTO, MemberDTO, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
 import Avatar from "./Avatar";
 import { inputClass, Modal, SubmitButton, useSubmit } from "./Dialogs";
+import { DiscoverySettings, WelcomeSettings } from "./ServerOnboardingSettings";
 
-const dangerButton = "rounded-xl bg-danger px-4 py-2.5 text-sm font-semibold text-white hover:bg-danger/90 disabled:opacity-60";
+const dangerButton = "rounded-xl bg-danger-strong px-4 py-2.5 text-sm font-semibold text-white hover:bg-danger-strong/90 disabled:opacity-60";
 const quietButton = "rounded-xl bg-ink-800 px-4 py-2.5 text-sm text-muted hover:text-fg";
 
+const TABS = [
+  { id: "general", label: "عمومی" },
+  { id: "discovery", label: "کاوش" },
+  { id: "welcome", label: "خوش‌آمدگویی" },
+] as const;
+
 /**
- * Rename the server, renew its invite link, give it to someone else or delete it.
- * Owners and admins see the first two; the last two belong to the owner alone.
+ * Rename the server, renew its invite link, give it to someone else or delete it; list it in the public directory;
+ * and set up what newcomers see. Owners and admins see everything except ownership, which belongs to the owner alone.
  */
 export default function ServerSettingsDialog({
   server,
   members,
+  channels,
+  discovery,
+  welcome,
   meId,
   onClose,
   onChanged,
@@ -27,6 +37,9 @@ export default function ServerSettingsDialog({
 }: {
   server: ServerDTO;
   members: MemberDTO[];
+  channels: ChannelDTO[];
+  discovery: DiscoverySettingsDTO;
+  welcome: WelcomeDTO;
   meId: string;
   onClose: () => void;
   /** Called with the fresh server detail after something changed. */
@@ -38,6 +51,7 @@ export default function ServerSettingsDialog({
   const [renewing, setRenewing] = useState(false);
   const [confirmRenew, setConfirmRenew] = useState(false);
   const [panel, setPanel] = useState<"transfer" | "delete" | null>(null);
+  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("general");
 
   const rename = useSubmit(
     () => api<ServerDetailDTO>(`/api/servers/${server.id}`, { method: "PATCH", body: { name } }),
@@ -65,6 +79,19 @@ export default function ServerSettingsDialog({
 
   return (
     <Modal title="تنظیمات سرور" onClose={onClose}>
+      <div role="tablist" className="mb-4 grid grid-cols-3 gap-1 rounded-full bg-ink-850 p-1 text-sm">
+        {TABS.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={cn("rounded-full py-2 sm:py-1.5", tab === t.id ? "bg-accent-strong text-on-accent" : "text-muted hover:text-fg")}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "discovery" && <DiscoverySettings server={server} value={discovery} onChanged={onChanged} onNotify={onNotify} />}
+      {tab === "welcome" && <WelcomeSettings server={server} value={welcome} channels={channels} onChanged={onChanged} onNotify={onNotify} />}
+
+      {tab === "general" && (
+      <>
       <form onSubmit={rename.submit} className="space-y-4">
         <label className="block space-y-1.5">
           <span className="text-sm text-muted">نام سرور</span>
@@ -76,12 +103,12 @@ export default function ServerSettingsDialog({
         </SubmitButton>
       </form>
 
-      <section className="mt-5 space-y-2 border-t border-white/5 pt-4">
+      <section className="mt-5 space-y-2 border-t border-line pt-4">
         <h3 className="text-xs font-semibold text-muted">لینک دعوت</h3>
         <button
           onClick={() => shareInvite(server, onNotify)}
           dir="ltr"
-          className="flex w-full items-center gap-2 rounded-xl bg-ink-950 px-3 py-2.5 text-start text-sm ring-1 ring-white/5 hover:ring-accent/50"
+          className="flex w-full items-center gap-2 rounded-xl bg-ink-850 px-3 py-2.5 text-start text-sm ring-1 ring-line hover:ring-accent/50"
         >
           <Link2 className="size-4 shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate">{link}</span>
@@ -110,7 +137,7 @@ export default function ServerSettingsDialog({
       </section>
 
       {isOwner && (
-        <section className="mt-5 space-y-2 border-t border-white/5 pt-4">
+        <section className="mt-5 space-y-2 border-t border-line pt-4">
           <h3 className="text-xs font-semibold text-muted">مالکیت سرور</h3>
           {panel === "transfer" ? (
             <TransferPanel
@@ -138,6 +165,8 @@ export default function ServerSettingsDialog({
             </PanelButton>
           )}
         </section>
+      )}
+      </>
       )}
     </Modal>
   );
@@ -176,7 +205,7 @@ function TransferPanel({
 
   if (!members.length) {
     return (
-      <div className="rounded-xl bg-ink-950 p-3 text-sm leading-6 text-muted">
+      <div className="rounded-xl bg-ink-850 p-3 text-sm leading-6 text-muted">
         هنوز عضو دیگری در سرور نیست. اول کسی را دعوت کنید.
         <button onClick={onCancel} className="mt-2 block text-accent">
           بستن
@@ -186,7 +215,7 @@ function TransferPanel({
   }
 
   return (
-    <form onSubmit={submit} className="space-y-3 rounded-xl bg-ink-950 p-3 ring-1 ring-white/5">
+    <form onSubmit={submit} className="space-y-3 rounded-xl bg-ink-850 p-3 ring-1 ring-line">
       <p className="text-sm leading-6">مالک جدید را انتخاب کنید. شما مدیر می‌شوید و دیگر نمی‌توانید سرور را حذف یا واگذار کنید.</p>
       <ul className="scrollbar-thin max-h-48 space-y-0.5 overflow-y-auto">
         {members.map((m) => (

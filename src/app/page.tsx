@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import App from "@/components/app/App";
+import Landing from "@/components/landing/Landing";
 import { currentUser } from "@/server/http";
 import { toMe } from "@/server/serialize";
 import { listServers } from "@/server/servers";
@@ -9,7 +10,9 @@ export const instant = false;
 
 export default async function Home({ searchParams }: PageProps<"/">) {
   const user = await currentUser();
-  if (!user?.name) redirect("/login");
+  // Visitors without a session see the landing page; signed-in people who never picked a name finish signing up.
+  if (!user) return <Landing />;
+  if (!user.name) redirect("/login");
 
   const { server } = await searchParams;
   const servers = await listServers(user._id);

@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { AtSign, BellOff, CornerUpLeft, SearchX, SendHorizontal, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { AtSign, BellOff, ChevronDown, CornerUpLeft, Pin, ScrollText, SearchX, SendHorizontal, Sticker as StickerIcon, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn, formatDateTime, formatDay, sameDay } from "@/lib/format";
 import { EVERYONE, hasMention, pingsUser } from "@/lib/mentions";
 import { isTouchDevice } from "@/lib/mobile";
-import { can, isMuted, msUntil, outranks } from "@/lib/permissions";
+import { can, canViewChannel, isMuted, msUntil, outranks } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
+import { foldForSearch, matchesSearch } from "@/lib/search";
 import { getSocket } from "@/lib/socket";
 import type {
   ChannelDTO,
@@ -23,16 +24,41 @@ import type {
 } from "@/lib/types";
 import Avatar from "./Avatar";
 import { Modal } from "./Dialogs";
+import ForwardDialog from "./ForwardDialog";
 import MessageItem, { type MessageActions } from "./MessageItem";
+import { StickerPicker } from "./Stickers";
 
 const GROUP_WINDOW_MS = 5 * 60_000;
 /** How often we tell others we're typing, and how long their indicator lasts without a new signal. */
 const TYPING_SEND_MS = 2500;
 const TYPING_SHOW_MS = 4000;
+/**
+ * The most messages kept in memory (and in the DOM) at once. Scrolling far in one direction drops the far end, which
+ * is loaded again when the reader comes back, so a channel's length never decides how heavy the page is.
+ */
+const MAX_LOADED = 200;
+/** How far before an edge of the list the next page starts loading. */
+const LOAD_MARGIN = "600px 0px";
+/** Within this many pixels of the bottom the view follows new messages. */
+const BOTTOM_SLACK = 80;
+
+interface MessagePage {
+  messages: MessageDTO[];
+  /** Older messages exist beyond this page. */
+  hasMore: boolean;
+  /** Newer messages exist beyond this page; absent when the request says nothing about it. */
+  hasNewer?: boolean;
+}
 
 function addUnique(list: MessageDTO[], incoming: MessageDTO[]) {
   const seen = new Set(list.map((m) => m.id));
   return [...list, ...incoming.filter((m) => !seen.has(m.id))];
+}
+
+/** The pin list with `m` added, updated or removed, newest pin first. */
+function withPin(pins: MessageDTO[], m: MessageDTO) {
+  const rest = pins.filter((p) => p.id !== m.id);
+  return m.pinnedAt ? [m, ...rest].sort((a, b) => b.pinnedAt!.localeCompare(a.pinnedAt!)) : rest;
 }
 
 const REPLY_PREVIEW_LENGTH = 120;
@@ -48,7 +74,10 @@ export default function ChatView({
   members,
   online,
   dm,
+  rulesPending,
   onOpenProfile,
+  onOpenWelcome,
+  onNotify,
 }: {
   me: MeDTO;
   channel: ChannelDTO;
@@ -57,17 +86,34 @@ export default function ChatView({
   search: string;
   members: MemberDTO[];
   online: Record<string, boolean>;
+  /** The server's rules haven't been accepted yet, so writing is closed. */
+  rulesPending: boolean;
   onOpenProfile: (userId: string) => void;
+  /** Reopens the welcome screen with the rules. */
+  onOpenWelcome: () => void;
+  onNotify: (message: string) => void;
 }) {
   const [messages, setMessages] = useState<MessageDTO[]>([]);
+  /** Every pinned message of the channel, including ones older than what is loaded. */
+  const [pins, setPins] = useState<MessageDTO[]>([]);
+  const [pinsOpen, setPinsOpen] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  /** The loaded messages stop short of the newest one, so live messages are not added until the reader returns. */
+  const [hasNewer, setHasNewer] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState<"older" | "newer" | null>(null);
+  /** A page failed to load; paging stops until the reader retries, instead of asking again in a loop. */
+  const [loadFailed, setLoadFailed] = useState<"older" | "newer" | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
   const [draft, setDraft] = useState("");
   const [error, setError] = useState<string>();
   const [typing, setTyping] = useState<Record<string, { user: UserDTO; until: number }>>({});
   const [replyTo, setReplyTo] = useState<MessageDTO | null>(null);
+  const [stickersOpen, setStickersOpen] = useState(false);
+  const closeStickers = useCallback(() => setStickersOpen(false), []);
   const [selected, setSelected] = useState<{ id: string; picking: boolean } | null>(null);
   const [deleting, setDeleting] = useState<MessageDTO | null>(null);
+  const [forwarding, setForwarding] = useState<MessageDTO | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
   const [, expireMute] = useState(0);
   const [caret, setCaret] = useState(0);
@@ -78,27 +124,40 @@ export default function ChatView({
   const lastTypingSent = useRef(0);
   /** userId → name of everyone picked from the "@" menu in this chat; only those still written in the text are sent as pings. */
   const picked = useRef(new Map<string, string>());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const topRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesRef = useRef<MessageDTO[]>([]);
+  const hasNewerRef = useRef(false);
+  /** One page request at a time; `epoch` changes when the window is replaced so a late page is dropped. */
+  const busy = useRef(false);
+  const epoch = useRef(0);
+  const stickToBottom = useRef(true);
+  /** The message that must stay where it is on screen when the list changes above or below it. */
+  const anchor = useRef<{ id: string; offset: number } | null>(null);
+  const pendingJump = useRef<string | null>(null);
 
+  const q = foldForSearch(search);
   const memberById = useMemo(() => new Map(members.map((m) => [m.user.id, m])), [members]);
   const myMember = memberById.get(me.id);
   const myRole: Role = myMember?.role ?? "member";
-  const muted = isMuted(myMember?.mutedUntil);
+  const muted = isMuted(myMember?.mutedUntil) || rulesPending;
 
   // "@" followed by letters right before the cursor opens the member menu (not in direct messages, where there is nobody to ping).
   const word = dm || muted ? null : /(^|[\s(])@([^\s@]*)$/u.exec(draft.slice(0, caret));
   const wordStart = word ? caret - word[2].length - 1 : -1;
   const candidates: Candidate[] = useMemo(() => {
     if (!word || wordStart === menuClosedAt) return [];
-    const q = word[2].toLowerCase();
+    const q = foldForSearch(word[2]);
     const people = members
-      .filter((m) => m.user.id !== me.id && m.user.name.toLowerCase().includes(q))
-      .sort((a, b) => Number(b.user.name.toLowerCase().startsWith(q)) - Number(a.user.name.toLowerCase().startsWith(q)))
+      .filter((m) => m.user.id !== me.id && canViewChannel(channel, m.role, m.user.id) && matchesSearch(m.user.name, q))
+      .sort((a, b) => Number(foldForSearch(b.user.name).startsWith(q)) - Number(foldForSearch(a.user.name).startsWith(q)))
       .map((m): Candidate => ({ kind: "user", user: m.user }));
     const everyone: Candidate[] = can(myRole, "message:mention_everyone") && EVERYONE.startsWith(q) ? [{ kind: "everyone" }] : [];
     return [...everyone, ...people].slice(0, MENU_SIZE);
     // `word` is derived from draft and caret.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, caret, members, me.id, myRole, menuClosedAt]);
+  }, [draft, caret, members, channel, me.id, myRole, menuClosedAt]);
   const activeCandidate = Math.min(menuIndex, candidates.length - 1);
 
   // The composer unlocks by itself when the mute runs out.
@@ -120,11 +179,15 @@ export default function ChatView({
       })
       .catch((err) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
+    api<{ messages: MessageDTO[] }>(`/api/channels/${channel.id}/pins`)
+      .then((res) => !cancelled && setPins((live) => res.messages.reduce(withPin, live)))
+      .catch(() => {});
 
     const socket = getSocket();
     const onMessage = (m: MessageDTO) => {
       if (m.channelId !== channel.id) return;
-      setMessages((list) => addUnique(list, [m]));
+      // Away from the newest messages, appending would leave a gap; returning to the bottom loads them.
+      if (!hasNewerRef.current) setMessages((list) => addUnique(list, [m]));
       setTyping((t) => {
         if (!t[m.author.id]) return t;
         const rest = { ...t };
@@ -144,6 +207,12 @@ export default function ChatView({
         }),
       );
       setReplyTo((r) => (r?.id === m.id ? m : r));
+      setPins((list) => list.map((x) => (x.id === m.id ? m : x)));
+    };
+    const onPin = (m: LiveMessageDTO) => {
+      if (m.channelId !== channel.id) return;
+      setMessages((list) => list.map((x) => (x.id === m.id ? { ...x, pinnedAt: m.pinnedAt } : x)));
+      setPins((list) => withPin(list, m));
     };
     const onDelete = ({ channelId, messageId }: MessageDeletedEvent) => {
       if (channelId !== channel.id) return;
@@ -155,6 +224,7 @@ export default function ChatView({
           ),
       );
       setReplyTo((r) => (r?.id === messageId ? null : r));
+      setPins((list) => list.filter((x) => x.id !== messageId));
       setSelected((sel) => (sel?.id === messageId ? null : sel));
     };
     const onReactions = ({ channelId, messageId, reactions }: ReactionsEvent) => {
@@ -176,10 +246,12 @@ export default function ChatView({
             }))
           : list,
       );
+      setPins((list) => (list.some((x) => x.author.id === u.id) ? list.map((x) => (x.author.id === u.id ? { ...x, author: u } : x)) : list));
     };
     socket.on("user:update", onUserUpdate);
     socket.on("message:new", onMessage);
     socket.on("message:edit", onEdit);
+    socket.on("message:pin", onPin);
     socket.on("message:delete", onDelete);
     socket.on("message:reactions", onReactions);
     socket.on("typing", onTyping);
@@ -188,6 +260,7 @@ export default function ChatView({
       socket.off("user:update", onUserUpdate);
       socket.off("message:new", onMessage);
       socket.off("message:edit", onEdit);
+      socket.off("message:pin", onPin);
       socket.off("message:delete", onDelete);
       socket.off("message:reactions", onReactions);
       socket.off("typing", onTyping);
@@ -208,20 +281,168 @@ export default function ChatView({
     return () => window.clearInterval(timer);
   }, [anyTyping]);
 
-  const loadOlder = async () => {
-    if (!messages.length) return;
-    setLoading(true);
+  const setNewer = useCallback((value: boolean) => {
+    hasNewerRef.current = value;
+    setHasNewer(value);
+  }, []);
+
+  /** Remembers the first message on screen and where it sits, so it can be put back after the list changes. */
+  const captureAnchor = () => {
+    const box = scrollRef.current;
+    if (!box) return;
+    const top = box.getBoundingClientRect().top;
+    for (const row of box.querySelectorAll<HTMLElement>("[data-mid]")) {
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom > top) {
+        anchor.current = { id: row.dataset.mid!, offset: rect.top - top };
+        return;
+      }
+    }
+  };
+
+  const flash = (id: string) => {
+    setFlashId(id);
+    window.setTimeout(() => setFlashId((current) => (current === id ? null : current)), 1400);
+  };
+
+  /** Loads the page next to the oldest or newest loaded message, and drops the far end beyond MAX_LOADED. */
+  const loadMore = useCallback(
+    async (dir: "older" | "newer") => {
+      const loaded = messagesRef.current;
+      if (busy.current || !loaded.length) return;
+      busy.current = true;
+      const mine = epoch.current;
+      setLoadFailed(null);
+      setLoadingMore(dir);
+      try {
+        const cursor = dir === "older" ? `before=${loaded[0].id}` : `after=${loaded[loaded.length - 1].id}`;
+        const res = await api<MessagePage>(`/api/channels/${channel.id}/messages?${cursor}`);
+        if (mine !== epoch.current) return;
+        captureAnchor();
+        const current = messagesRef.current;
+        if (dir === "older") {
+          const merged = addUnique(res.messages, current);
+          const grew = merged.length > current.length;
+          const trimmed = merged.length > MAX_LOADED;
+          setMessages(trimmed ? merged.slice(0, MAX_LOADED) : merged);
+          setHasMore(grew && res.hasMore);
+          if (trimmed) setNewer(true);
+        } else {
+          const merged = addUnique(current, res.messages);
+          const grew = merged.length > current.length;
+          const trimmed = merged.length > MAX_LOADED;
+          setMessages(trimmed ? merged.slice(-MAX_LOADED) : merged);
+          setNewer(grew && !!res.hasNewer);
+          if (trimmed) setHasMore(true);
+        }
+      } catch (err) {
+        setLoadFailed(dir);
+        setError((err as Error).message);
+      } finally {
+        if (mine === epoch.current) {
+          busy.current = false;
+          setLoadingMore(null);
+        }
+      }
+    },
+    [channel.id, setNewer],
+  );
+
+  /** Replaces the loaded window with another page; whatever was loading is abandoned. */
+  const replaceWindow = async (query: string, prepare: () => void) => {
+    const mine = ++epoch.current;
+    busy.current = true;
+    setLoadFailed(null);
+    setLoadingMore(null);
     try {
-      const res = await api<{ messages: MessageDTO[]; hasMore: boolean }>(
-        `/api/channels/${channel.id}/messages?before=${messages[0].id}`,
-      );
-      setMessages((list) => addUnique(res.messages, list));
+      const res = await api<MessagePage>(`/api/channels/${channel.id}/messages${query}`);
+      if (mine !== epoch.current) return;
+      prepare();
+      anchor.current = null;
+      setMessages(res.messages);
       setHasMore(res.hasMore);
+      setNewer(!!res.hasNewer);
     } catch (err) {
+      pendingJump.current = null;
       setError((err as Error).message);
     } finally {
-      setLoading(false);
+      if (mine === epoch.current) busy.current = false;
     }
+  };
+
+  const scrollToBottom = () => {
+    const box = scrollRef.current;
+    if (box) box.scrollTo({ top: box.scrollHeight, behavior: "smooth" });
+  };
+
+  /** Back to the newest messages, reloading them first when the loaded window ended earlier. */
+  const jumpToLatest = () => {
+    if (!hasNewerRef.current) return scrollToBottom();
+    replaceWindow("", () => {
+      stickToBottom.current = true;
+      setAtBottom(true);
+    });
+  };
+
+  const onScroll = () => {
+    const box = scrollRef.current;
+    if (!box) return;
+    const bottom = box.scrollHeight - box.scrollTop - box.clientHeight < BOTTOM_SLACK && !hasNewerRef.current;
+    stickToBottom.current = bottom;
+    setAtBottom(bottom);
+  };
+
+  // Keep what the reader is looking at in place: a new page changes the list above or below the view.
+  useLayoutEffect(() => {
+    messagesRef.current = messages;
+    const box = scrollRef.current;
+    if (!box) return;
+    const jumpTo = pendingJump.current;
+    pendingJump.current = null;
+    if (jumpTo) {
+      const target = document.getElementById(`msg-${jumpTo}`);
+      if (target) {
+        anchor.current = null;
+        target.scrollIntoView({ block: "center" });
+        return;
+      }
+    }
+    const pinned = anchor.current;
+    anchor.current = null;
+    if (pinned) {
+      const row = box.querySelector<HTMLElement>(`[data-mid="${pinned.id}"]`);
+      if (row) box.scrollTop += row.getBoundingClientRect().top - box.getBoundingClientRect().top - pinned.offset;
+    } else if (stickToBottom.current) {
+      box.scrollTop = box.scrollHeight;
+    }
+  }, [messages]);
+
+  // Load the next page as either end of the list comes within reach.
+  useEffect(() => {
+    const box = scrollRef.current;
+    const top = topRef.current;
+    const bottom = bottomRef.current;
+    if (!box || !top || !bottom || loading || q || loadingMore || loadFailed) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (!e.isIntersecting) continue;
+          if (e.target === top && hasMore) loadMore("older");
+          else if (e.target === bottom && hasNewer) loadMore("newer");
+        }
+      },
+      { root: box, rootMargin: LOAD_MARGIN },
+    );
+    observer.observe(top);
+    observer.observe(bottom);
+    return () => observer.disconnect();
+  }, [loading, q, loadingMore, loadFailed, hasMore, hasNewer, messages.length, loadMore]);
+
+  /** Shows a message just sent by this user, taking the view to the bottom where it lands. */
+  const addSent = (message: MessageDTO) => {
+    if (hasNewerRef.current) return jumpToLatest();
+    stickToBottom.current = true;
+    setMessages((list) => addUnique(list, [message]));
   };
 
   const send = async () => {
@@ -242,13 +463,30 @@ export default function ChatView({
           mentions: [...picked.current].filter(([, name]) => hasMention(content, name)).map(([id]) => id),
         },
       });
-      setMessages((list) => addUnique(list, [res.message]));
+      addSent(res.message);
     } catch (err) {
       setError((err as Error).message);
       setDraft((current) => current || content);
       setReplyTo((current) => current ?? replying);
     } finally {
       inputRef.current?.focus();
+    }
+  };
+
+  const sendSticker = async (sticker: string) => {
+    if (muted) return;
+    setError(undefined);
+    setStickersOpen(false);
+    const replying = replyTo;
+    setReplyTo(null);
+    try {
+      const res = await api<{ message: MessageDTO }>(`/api/channels/${channel.id}/messages`, {
+        body: { sticker, replyTo: replying?.id },
+      });
+      addSent(res.message);
+    } catch (err) {
+      setError((err as Error).message);
+      setReplyTo((current) => current ?? replying);
     }
   };
 
@@ -326,12 +564,29 @@ export default function ChatView({
         .then((res) => setMessages((list) => list.map((x) => (x.id === m.id ? { ...x, reactions: res.reactions } : x))))
         .catch((err) => setError(err.message));
     },
+    onForward: setForwarding,
+    onPin: (m, pinned) => {
+      // The socket event updates everyone, including this tab; the response covers a slow socket.
+      api<{ message: MessageDTO }>(`/api/channels/${channel.id}/messages/${m.id}/pin`, { method: "PUT", body: { pinned } })
+        .then(({ message }) => {
+          setMessages((list) => list.map((x) => (x.id === m.id ? { ...x, pinnedAt: message.pinnedAt } : x)));
+          setPins((list) => withPin(list, message));
+        })
+        .catch((err) => setError(err.message));
+    },
     onJump: (id) => {
       const el = document.getElementById(`msg-${id}`);
-      if (!el) return;
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
-      setFlashId(id);
-      window.setTimeout(() => setFlashId((current) => (current === id ? null : current)), 1400);
+      if (el) {
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        flash(id);
+        return;
+      }
+      // Older (or newer) than what is loaded: load the stretch around it.
+      replaceWindow(`?around=${id}`, () => {
+        stickToBottom.current = false;
+        pendingJump.current = id;
+        flash(id);
+      });
     },
     onSelect: (id, picking = false) => setSelected(id ? { id, picking } : null),
   };
@@ -351,31 +606,33 @@ export default function ChatView({
 
   const nameOf = (userId: string) => (userId === me.id ? "شما" : (memberById.get(userId)?.user.name ?? "عضو سابق"));
 
-  const q = search.toLowerCase();
-  const shown = q ? messages.filter((m) => m.content.toLowerCase().includes(q)) : messages;
+  const shown = q ? messages.filter((m) => matchesSearch(m.content, q)) : messages;
   const typers = Object.values(typing).map((t) => t.user);
 
   return (
     <div className="bg-glow flex min-h-0 flex-1 flex-col">
+      {!q && pins.length > 0 && (
+        <PinList
+          pins={pins}
+          open={pinsOpen}
+          onToggle={() => setPinsOpen((o) => !o)}
+          onPick={(id) => {
+            setPinsOpen(false);
+            actions.onJump(id);
+          }}
+        />
+      )}
       {q && shown.length > 0 && (
-        <div className="shrink-0 border-b border-white/5 bg-ink-900/60 px-4 py-2 text-center text-xs text-muted">
+        <div className="shrink-0 border-b border-line px-4 py-2 text-center text-xs text-muted">
           {toPersianDigits(shown.length)} پیام پیدا شد{hasMore && " (در پیام‌های بارگذاری‌شده)"}
         </div>
       )}
-      {/* column-reverse keeps the view pinned to the newest message without manual scrolling */}
-      <div className="scrollbar-thin flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
-        <div className="px-3 py-4 sm:px-6">
-          {hasMore && !q && (
-            <div className="mb-4 text-center">
-              <button
-                onClick={loadOlder}
-                disabled={loading}
-                className="rounded-full bg-ink-850 px-4 py-1.5 text-xs text-accent ring-1 ring-white/5 hover:bg-ink-800"
-              >
-                پیام‌های قدیمی‌تر
-              </button>
-            </div>
-          )}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Scroll position is kept by hand (see the layout effect), so the browser's own anchoring must stay out of it. */}
+      <div ref={scrollRef} onScroll={onScroll} className="scrollbar-thin min-h-0 flex-1 overflow-y-auto [overflow-anchor:none]">
+        <div className="flex min-h-full flex-col justify-end px-3 py-4 sm:px-5">
+          <div ref={topRef} aria-hidden />
+          {hasMore && !q && <PageEdge loading={loadingMore === "older"} failed={loadFailed === "older"} onRetry={() => loadMore("older")} />}
           {loading && !messages.length && <MessagesSkeleton />}
           {!loading && !messages.length && (
             <div className="py-16 text-center">
@@ -409,10 +666,10 @@ export default function ChatView({
             const mine = m.author.id === me.id;
             const authorRole = memberById.get(m.author.id)?.role;
             return (
-              <div key={m.id}>
+              <div key={m.id} data-mid={m.id}>
                 {newDay && (
                   <div className="my-5 flex justify-center">
-                    <span className="rounded-full bg-ink-850 px-3 py-1 text-xs text-muted ring-1 ring-white/5">
+                    <span className="rounded-full bg-ink-800 px-3.5 py-1 text-xs font-medium text-fg/80">
                       {formatDay(m.createdAt)}
                     </span>
                   </div>
@@ -425,9 +682,11 @@ export default function ChatView({
                   pinged={pingsUser(m, me.id)}
                   highlight={q}
                   authorRole={authorRole}
+                  authorBadges={memberById.get(m.author.id)?.badges}
                   authorOnline={memberById.has(m.author.id) ? !!online[m.author.id] : undefined}
                   canWrite={!muted}
                   canDelete={mine || (can(myRole, "message:delete_any") && outranks(myRole, authorRole ?? "member"))}
+                  canPin={can(myRole, "message:pin")}
                   selected={selected?.id === m.id}
                   picking={selected?.id === m.id && selected.picking}
                   flash={flashId === m.id}
@@ -437,18 +696,38 @@ export default function ChatView({
               </div>
             );
           })}
+          {hasNewer && !q && <PageEdge loading={loadingMore === "newer"} failed={loadFailed === "newer"} onRetry={() => loadMore("newer")} />}
+          <div ref={bottomRef} aria-hidden />
         </div>
       </div>
+      {!atBottom && !q && (
+        <button
+          onClick={jumpToLatest}
+          className="absolute bottom-3 end-4 z-10 flex animate-pop-in items-center gap-1.5 rounded-full bg-accent-strong py-2 ps-3 pe-4 text-xs font-semibold text-on-accent shadow-lg shadow-black/40 hover:brightness-105 sm:end-6"
+        >
+          <ChevronDown className="size-4" />
+          {hasNewer ? "رفتن به آخرین پیام‌ها" : "پایین"}
+        </button>
+      )}
+      </div>
 
-      <div className="shrink-0 px-3 pb-safe-4 sm:px-6">
+      <div className="shrink-0 px-3 pb-safe-4 sm:px-5 md:pb-4">
         <TypingLine users={typers} />
         <div className="flex items-end gap-3">
-          <div className="hidden pb-1 sm:block">
+          <div className="hidden">
             <Avatar user={me} />
           </div>
           <div className="min-w-0 flex-1">
             {error && <p className="mb-2 text-sm text-danger">{error}</p>}
-            {muted && myMember?.mutedUntil ? (
+            {rulesPending ? (
+              <button
+                onClick={onOpenWelcome}
+                className="flex w-full items-center gap-3 rounded-2xl bg-accent-strong/15 px-4 py-3 text-start text-sm text-accent ring-1 ring-accent/30 hover:bg-accent-strong/25"
+              >
+                <ScrollText className="size-4 shrink-0" />
+                <span>برای نوشتن پیام، ابتدا قوانین سرور را بخوانید و بپذیرید.</span>
+              </button>
+            ) : muted && myMember?.mutedUntil ? (
               <div className="flex items-center gap-3 rounded-2xl bg-amber-400/10 px-4 py-3 text-sm text-amber-200 ring-1 ring-amber-400/20">
                 <BellOff className="size-4 shrink-0" />
                 <span>شما تا {formatDateTime(myMember.mutedUntil)} بی‌صدا شده‌اید و نمی‌توانید پیام بفرستید.</span>
@@ -456,7 +735,7 @@ export default function ChatView({
             ) : (
             <>
             {replyTo && (
-              <div className="mb-1.5 flex items-center gap-2 rounded-xl bg-ink-850 px-3 py-2 text-xs ring-1 ring-white/5">
+              <div className="mb-1.5 flex items-center gap-2 rounded-2xl bg-ink-800 px-4 py-2 text-xs">
                 <CornerUpLeft className="size-3.5 shrink-0 text-accent ltr:-scale-x-100" />
                 <span className="min-w-0 flex-1 truncate">
                   پاسخ به <span className="font-semibold">{replyTo.author.id === me.id ? "خودتان" : replyTo.author.name}</span>
@@ -464,17 +743,18 @@ export default function ChatView({
                     {replyTo.content}
                   </span>
                 </span>
-                <button onClick={() => setReplyTo(null)} aria-label="لغو پاسخ" className="p-1 text-muted hover:text-fg">
+                <button onClick={() => setReplyTo(null)} aria-label="لغو پاسخ" className="-me-2 grid size-8 place-items-center rounded-full text-muted hover:bg-ink-700 hover:text-fg">
                   <X className="size-4" />
                 </button>
               </div>
             )}
             <div className="relative">
+            {stickersOpen && <StickerPicker onPick={sendSticker} onClose={closeStickers} />}
             {candidates.length > 0 && (
               <ul
                 role="listbox"
                 aria-label="اعضا"
-                className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-2xl bg-ink-800 p-1 shadow-2xl ring-1 ring-white/10"
+                className="absolute inset-x-0 bottom-full z-20 mb-2 surface-float animate-pop-in overflow-hidden rounded-2xl p-1"
               >
                 {candidates.map((c, i) => (
                   <li key={c.kind === "user" ? c.user.id : EVERYONE} role="option" aria-selected={i === activeCandidate}>
@@ -508,7 +788,7 @@ export default function ChatView({
                 ))}
               </ul>
             )}
-            <div className="flex items-end gap-2 rounded-2xl bg-ink-850 py-1.5 ps-4 pe-1.5 ring-1 ring-white/5 transition focus-within:ring-accent/50">
+            <div className="flex items-end gap-1 rounded-[1.75rem] bg-ink-800 py-1.5 ps-5 pe-1.5 transition focus-within:ring-2 focus-within:ring-accent/60">
               <textarea
                 ref={inputRef}
                 dir="auto"
@@ -519,13 +799,26 @@ export default function ChatView({
                 onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
                 onKeyDown={onKeyDown}
                 placeholder={dm ? `پیام به ${dm.name}` : `پیام به #${channel.name}`}
-                className="field-sizing-content max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm leading-7 outline-none placeholder:text-muted/70"
+                className="bidi-lines field-sizing-content max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base md:text-sm leading-7 outline-none placeholder:text-muted"
               />
+              <button
+                data-sticker-toggle
+                onClick={() => setStickersOpen((o) => !o)}
+                aria-label="استیکر"
+                aria-expanded={stickersOpen}
+                title="استیکر"
+                className={cn(
+                  "grid size-10 shrink-0 place-items-center rounded-full transition hover:bg-ink-700 hover:text-fg active:scale-95",
+                  stickersOpen ? "text-accent" : "text-muted",
+                )}
+              >
+                <StickerIcon className="size-5" />
+              </button>
               <button
                 onClick={send}
                 disabled={!draft.trim()}
                 aria-label="ارسال"
-                className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent-strong text-white shadow-lg shadow-accent-strong/30 transition hover:bg-accent active:scale-95 disabled:bg-transparent disabled:text-muted disabled:shadow-none"
+                className="grid size-10 shrink-0 place-items-center rounded-full bg-accent-strong text-on-accent transition hover:brightness-105 active:scale-95 disabled:bg-transparent disabled:text-muted disabled:shadow-none"
               >
                 <SendHorizontal className="size-5 -scale-x-100" />
               </button>
@@ -537,14 +830,26 @@ export default function ChatView({
         </div>
       </div>
 
+      {forwarding && (
+        <ForwardDialog
+          message={forwarding}
+          sourceChannelId={channel.id}
+          onClose={() => setForwarding(null)}
+          onForwarded={(where) => {
+            setForwarding(null);
+            onNotify(`پیام به ${where} فرستاده شد`);
+          }}
+        />
+      )}
+
       {deleting && (
         <Modal title="حذف پیام" onClose={() => setDeleting(null)}>
           <p className="mb-3 text-sm text-muted">این پیام برای همه حذف می‌شود و برگشتی ندارد.</p>
-          <p dir="auto" className="mb-5 line-clamp-4 rounded-xl bg-ink-950 px-4 py-3 text-sm leading-7 break-words ring-1 ring-white/5">
+          <p dir="auto" className="bidi-lines mb-5 line-clamp-4 whitespace-pre-wrap rounded-xl bg-ink-800 px-4 py-3 text-sm leading-7 break-words">
             {deleting.content}
           </p>
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={confirmDelete} className="rounded-xl bg-danger px-4 py-2.5 font-semibold text-white hover:bg-danger/90">
+            <button onClick={confirmDelete} className="rounded-xl bg-danger-strong px-4 py-2.5 font-semibold text-white hover:bg-danger-strong/90">
               حذف
             </button>
             <button onClick={() => setDeleting(null)} className="rounded-xl bg-ink-800 px-4 py-2.5 text-muted hover:text-fg">
@@ -552,6 +857,70 @@ export default function ChatView({
             </button>
           </div>
         </Modal>
+      )}
+    </div>
+  );
+}
+
+/** The strip at either end of the message list while more pages exist; its height is fixed so loading never moves the view. */
+function PageEdge({ loading, failed, onRetry }: { loading: boolean; failed: boolean; onRetry: () => void }) {
+  return (
+    <div className="grid h-10 shrink-0 place-items-center text-xs text-muted" aria-live="polite">
+      {failed ? (
+        <button onClick={onRetry} className="rounded-full bg-ink-800 px-4 py-1.5 text-accent hover:bg-ink-700">
+          تلاش دوباره
+        </button>
+      ) : (
+        loading && <span className="animate-pulse">در حال بارگذاری…</span>
+      )}
+    </div>
+  );
+}
+
+/** The channel's pinned messages: the newest one on a single line that opens into the full list. */
+function PinList({
+  pins,
+  open,
+  onToggle,
+  onPick,
+}: {
+  pins: MessageDTO[];
+  open: boolean;
+  onToggle: () => void;
+  onPick: (messageId: string) => void;
+}) {
+  return (
+    <div className="shrink-0 border-b border-line">
+      <button
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-4 py-2.5 text-start text-xs transition-colors hover:bg-ink-850 sm:px-5"
+      >
+        <Pin className="size-3.5 shrink-0 text-accent" />
+        <span className="shrink-0 font-semibold">{toPersianDigits(pins.length)} پیام سنجاق‌شده</span>
+        {!open && (
+          <span dir="auto" className="min-w-0 flex-1 truncate text-muted">
+            {pins[0].content}
+          </span>
+        )}
+        <ChevronDown className={cn("ms-auto size-4 shrink-0 text-muted transition", open && "rotate-180")} />
+      </button>
+      {open && (
+        <ul className="scrollbar-thin max-h-60 overflow-y-auto px-2 pb-2 sm:px-4">
+          {pins.map((p) => (
+            <li key={p.id}>
+              <button onClick={() => onPick(p.id)} className="w-full rounded-xl px-3 py-2 text-start hover:bg-ink-800">
+                <span className="flex items-center gap-2 text-xs text-muted">
+                  <span className="font-semibold text-fg/80">{p.author.name}</span>
+                  {formatDateTime(p.createdAt)}
+                </span>
+                <span dir="auto" className="mt-0.5 line-clamp-2 block text-sm leading-6 break-words">
+                  {p.content}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );
@@ -568,7 +937,7 @@ function TypingLine({ users }: { users: UserDTO[] }) {
           ? `${names[0]} و ${names[1]} در حال نوشتن هستند`
           : `${toPersianDigits(names.length)} نفر در حال نوشتن هستند`;
   return (
-    <div className="flex h-7 items-center gap-2 px-1 text-xs text-muted sm:ps-12" aria-live="polite">
+    <div className="flex h-7 items-center gap-2 ps-5 text-xs text-muted" aria-live="polite">
       {text && (
         <>
           <span className="flex gap-0.5" aria-hidden>
@@ -586,12 +955,12 @@ function TypingLine({ users }: { users: UserDTO[] }) {
 function MessagesSkeleton() {
   return (
     <div className="animate-pulse space-y-6 py-4" aria-hidden>
-      {[60, 40, 75].map((w, i) => (
-        <div key={w} className={cn("flex gap-3", i === 1 && "flex-row-reverse")}>
+      {[60, 40, 75].map((w) => (
+        <div key={w} className="flex gap-3">
           <span className="size-9 shrink-0 rounded-full bg-ink-800" />
-          <div className={cn("flex flex-1 flex-col gap-2", i === 1 && "items-end")}>
+          <div className="flex flex-1 flex-col gap-2">
             <span className="h-3 w-20 rounded-full bg-ink-800" />
-            <span className="h-10 rounded-2xl bg-ink-850" style={{ width: `${w}%` }} />
+            <span className="h-4 rounded-full bg-ink-850" style={{ width: `${w}%` }} />
           </div>
         </div>
       ))}

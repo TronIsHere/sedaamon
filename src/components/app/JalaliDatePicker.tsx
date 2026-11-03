@@ -43,7 +43,7 @@ export function JalaliCalendar({ value, onChange, min }: { value: Date | null; o
   const nav = "grid size-9 place-items-center rounded-lg text-muted transition hover:bg-ink-800 hover:text-fg";
 
   return (
-    <div className="rounded-xl bg-ink-950 p-3 ring-1 ring-white/5" role="group" aria-label="تقویم شمسی">
+    <div className="rounded-xl bg-ink-850 p-3 ring-1 ring-line" role="group" aria-label="تقویم شمسی">
       <div className="flex items-center justify-between px-1">
         <span className="text-sm font-semibold">
           {JALALI_MONTHS[view.jm - 1]} {faDigits(view.jy)}
@@ -80,7 +80,7 @@ export function JalaliCalendar({ value, onChange, min }: { value: Date | null; o
               onClick={() => onChange(date)}
               className={cn(
                 "h-9 w-full rounded-lg leading-none tabular-nums transition",
-                selected && "bg-accent-strong font-semibold text-white",
+                selected && "bg-accent-strong font-semibold text-on-accent",
                 !selected && sameDay(today, date) && "ring-1 ring-inset ring-fg/40",
                 !selected && i % 7 === 6 && "text-muted/60",
                 !selected && !disabled && "hover:bg-ink-800",
@@ -116,7 +116,7 @@ export default function JalaliDatePicker({
         aria-label={label}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center gap-2 rounded-xl border border-white/5 bg-ink-950 px-3 py-2.5 text-start outline-none focus-visible:border-accent"
+        className="flex w-full items-center gap-2 rounded-xl border border-line bg-ink-850 px-3 py-2.5 text-start outline-none focus-visible:border-accent"
       >
         <CalendarDays className="size-4 shrink-0 text-muted" />
         <span className={cn("truncate", !value && "text-muted/60")}>{value ? formatJalali(value, { weekday: true }) : "انتخاب تاریخ"}</span>

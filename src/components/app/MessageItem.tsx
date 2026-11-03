@@ -1,15 +1,18 @@
 "use client";
 
 import { Fragment, useState, type KeyboardEvent, type ReactNode } from "react";
-import { CornerUpLeft, Pencil, Reply, SmilePlus, Trash2, X } from "lucide-react";
+import { CornerUpLeft, Forward, Pencil, Pin, PinOff, Reply, SmilePlus, Trash2, X } from "lucide-react";
 import { cn, formatTime } from "@/lib/format";
 import { findMentions, mentionNames } from "@/lib/mentions";
 import { isTouchDevice } from "@/lib/mobile";
 import { REACTION_EMOJIS } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
-import type { MessageDTO, Role } from "@/lib/types";
+import { foldForSearch } from "@/lib/search";
+import type { BadgeId, MessageDTO, Role } from "@/lib/types";
 import Avatar from "./Avatar";
+import { BadgeIcon } from "./Badges";
 import { RoleIcon } from "./RoleBadge";
+import { StickerArt } from "./Stickers";
 
 export interface MessageActions {
   onOpenProfile: (userId: string) => void;
@@ -18,6 +21,8 @@ export interface MessageActions {
   onSaveEdit: (m: MessageDTO, content: string) => Promise<void>;
   onDelete: (m: MessageDTO) => void;
   onReact: (m: MessageDTO, emoji: string) => void;
+  onPin: (m: MessageDTO, pinned: boolean) => void;
+  onForward: (m: MessageDTO) => void;
   onJump: (messageId: string) => void;
   /** Opens the action bar of one message (or its emoji row), or closes it with null. */
   onSelect: (messageId: string | null, picking?: boolean) => void;
@@ -31,9 +36,11 @@ export default function MessageItem({
   pinged,
   highlight,
   authorRole,
+  authorBadges,
   authorOnline,
   canWrite,
   canDelete,
+  canPin,
   selected,
   picking,
   flash,
@@ -48,10 +55,13 @@ export default function MessageItem({
   pinged: boolean;
   highlight: string;
   authorRole: Role | undefined;
+  /** What the author has earned in this server; only the "new member" badge is shown by the name. */
+  authorBadges: readonly BadgeId[] | undefined;
   authorOnline: boolean | undefined;
   /** False while muted. */
   canWrite: boolean;
   canDelete: boolean;
+  canPin: boolean;
   selected: boolean;
   /** The emoji row is open instead of the buttons. */
   picking: boolean;
@@ -94,16 +104,13 @@ export default function MessageItem({
     actions.onSelect(selected ? null : m.id);
   };
 
-  const hasActions = canWrite || canDelete;
-
   return (
     <div
       id={`msg-${m.id}`}
       className={cn(
-        "group flex gap-3 rounded-2xl transition-colors duration-700",
-        mine && "flex-row-reverse",
-        grouped ? "mt-1" : "mt-5",
-        pinged && "-mx-2 bg-accent/10 px-2 py-1.5 ring-1 ring-accent/30",
+        "group -mx-2 flex gap-3 rounded-2xl px-2 py-1 transition-colors duration-300 motion-safe:animate-fade-in hover:bg-ink-850",
+        grouped ? "mt-0" : "mt-3",
+        pinged && "bg-accent/10 ring-1 ring-accent/30 hover:bg-accent/10",
         flash && "bg-accent/15",
       )}
     >
@@ -115,22 +122,30 @@ export default function MessageItem({
         )}
       </div>
 
-      <div className={cn("relative flex min-w-0 max-w-[min(34rem,80%)] flex-col", mine ? "items-end" : "items-start")}>
+      <div className="relative flex min-w-0 flex-1 flex-col items-start">
         {!grouped && (
-          <div className={cn("mb-1.5 flex items-center gap-2 px-1", mine && "flex-row-reverse")}>
+          <div className="flex w-full items-center gap-2">
             <button onClick={() => actions.onOpenProfile(m.author.id)} className="flex items-center gap-1.5 text-sm font-semibold hover:underline">
               {mine ? "شما" : m.author.name}
               {authorRole && <RoleIcon role={authorRole} />}
+              {authorBadges?.includes("newcomer") && <BadgeIcon id="newcomer" size={18} />}
             </button>
-            <span className="text-[11px] text-muted">{formatTime(m.createdAt)}</span>
+            {m.pinnedAt && <PinMark />}
+            <span className="ms-auto shrink-0 text-xs text-muted">{formatTime(m.createdAt)}</span>
+          </div>
+        )}
+        {m.pinnedAt && grouped && (
+          <div className="mb-1 px-1">
+            <PinMark />
           </div>
         )}
 
+        {m.forwardedFrom && <ForwardedNote from={m.forwardedFrom} onOpenProfile={actions.onOpenProfile} />}
         {m.replyTo && <ReplyQuote reply={m.replyTo} onJump={actions.onJump} />}
 
-        <div className={cn("flex max-w-full items-end gap-2", mine && "flex-row-reverse")}>
+        <div className="flex w-full items-start gap-2">
           {editing ? (
-            <div className="w-[min(30rem,70vw)] max-w-full space-y-2 rounded-2xl bg-ink-850 p-2 ring-1 ring-accent/50">
+            <div className="w-full space-y-2 rounded-2xl bg-ink-800 p-2 ring-1 ring-accent/50">
               <textarea
                 ref={focusAtEnd}
                 dir="auto"
@@ -139,11 +154,11 @@ export default function MessageItem({
                 onChange={(e) => setEditing({ ...editing, text: e.target.value })}
                 onKeyDown={onEditKey}
                 aria-label="ویرایش پیام"
-                className="field-sizing-content max-h-48 min-h-10 w-full resize-none bg-transparent px-2 py-1 text-sm leading-7 outline-none"
+                className="bidi-lines field-sizing-content max-h-48 min-h-10 w-full resize-none bg-transparent px-2 py-1 text-base md:text-sm leading-7 outline-none"
               />
               {editing.error && <p className="px-2 text-xs text-danger">{editing.error}</p>}
               <div className="flex items-center justify-between gap-2 px-1">
-                <span className="hidden text-[11px] text-muted sm:block">Esc برای لغو · Enter برای ذخیره</span>
+                <span className="hidden text-xs text-muted sm:block">Esc برای لغو · Enter برای ذخیره</span>
                 <div className="ms-auto flex gap-1.5">
                   <button onClick={() => setEditing(null)} className="rounded-lg px-3 py-1.5 text-xs text-muted hover:text-fg">
                     انصراف
@@ -151,40 +166,42 @@ export default function MessageItem({
                   <button
                     onClick={saveEdit}
                     disabled={editing.busy || !editing.text.trim()}
-                    className="rounded-lg bg-accent-strong px-3 py-1.5 text-xs font-semibold text-white hover:bg-accent disabled:opacity-50"
+                    className="rounded-lg bg-accent-strong px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent disabled:opacity-50"
                   >
                     ذخیره
                   </button>
                 </div>
               </div>
             </div>
+          ) : m.sticker ? (
+            <span onClick={toggleSelect} className="block">
+              <StickerArt id={m.sticker} size={136} />
+            </span>
           ) : (
             <p
               dir="auto"
               onClick={toggleSelect}
               className={cn(
-                "rounded-2xl px-4 py-2.5 text-sm leading-7 whitespace-pre-wrap break-words",
-                mine ? "bg-accent-strong text-white shadow-lg shadow-accent-strong/20" : "bg-ink-850 text-fg ring-1 ring-white/5",
-                !grouped && !m.replyTo && (mine ? "rounded-se-md" : "rounded-ss-md"),
+                "bidi-lines min-w-0 flex-1 text-sm leading-7 whitespace-pre-wrap break-words text-fg/90 md:text-[15px]",
               )}
             >
-              <RichText text={m.content} names={mentionNames(m)} myId={myId} mentions={m.mentions} mine={mine} highlight={highlight} />
+              <RichText text={m.content} names={mentionNames(m)} myId={myId} mentions={m.mentions} mine={false} highlight={highlight} />
               {m.editedAt && (
-                <span className={cn("ms-2 text-[10px]", mine ? "text-white/60" : "text-muted")} title="این پیام ویرایش شده است">
+                <span className="ms-2 text-[11px] text-muted" title="این پیام ویرایش شده است">
                   (ویرایش‌شده)
                 </span>
               )}
             </p>
           )}
           {grouped && !editing && (
-            <span className="mb-1 shrink-0 text-[10px] text-muted opacity-0 transition group-hover:opacity-100">
+            <span className="ms-auto mt-1 shrink-0 text-[11px] text-muted opacity-0 transition group-hover:opacity-100">
               {formatTime(m.createdAt)}
             </span>
           )}
         </div>
 
         {m.reactions.length > 0 && (
-          <div className={cn("mt-1.5 flex flex-wrap gap-1", mine && "justify-end")}>
+          <div className="mt-1.5 flex flex-wrap gap-1">
             {m.reactions.map((r) => {
               const reacted = r.users.includes(myId);
               return (
@@ -195,8 +212,8 @@ export default function MessageItem({
                   onClick={() => actions.onReact(m, r.emoji)}
                   title={r.users.slice(0, 10).map(nameOf).join("، ") + (r.users.length > 10 ? "…" : "")}
                   className={cn(
-                    "flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ring-1 transition disabled:cursor-default",
-                    reacted ? "bg-accent-strong/20 text-fg ring-accent/60" : "bg-ink-850 text-muted ring-white/5 enabled:hover:ring-white/20",
+                    "flex min-h-7 items-center gap-1 rounded-full px-2.5 py-0.5 text-xs ring-1 transition-colors duration-150 disabled:cursor-default",
+                    reacted ? "bg-accent-strong/15 text-accent ring-accent/50" : "bg-ink-800 text-muted ring-transparent enabled:hover:ring-white/15",
                   )}
                 >
                   <span className="text-sm leading-5">{r.emoji}</span>
@@ -207,11 +224,10 @@ export default function MessageItem({
           </div>
         )}
 
-        {hasActions && !editing && (
+        {!editing && (
           <div
             className={cn(
-              "absolute -top-4 z-10 items-center gap-0.5 rounded-xl bg-ink-800 p-0.5 shadow-xl ring-1 ring-white/10",
-              mine ? "end-0" : "start-0",
+              "surface-float absolute -top-5 end-0 z-10 items-center gap-0.5 rounded-full p-1",
               selected ? "flex" : "hidden group-focus-within:flex group-hover:flex",
             )}
           >
@@ -225,7 +241,7 @@ export default function MessageItem({
                       actions.onReact(m, emoji);
                     }}
                     aria-label={`واکنش ${emoji}`}
-                    className="grid size-8 place-items-center rounded-lg text-base hover:bg-ink-700 active:scale-90"
+                    className="grid size-10 place-items-center rounded-full text-base transition-colors hover:bg-ink-700 active:scale-90 md:size-8"
                   >
                     {emoji}
                   </button>
@@ -252,9 +268,29 @@ export default function MessageItem({
                     </BarButton>
                   </>
                 )}
-                {mine && canWrite && (
+                <BarButton
+                  label="ارسال به…"
+                  onClick={() => {
+                    actions.onSelect(null);
+                    actions.onForward(m);
+                  }}
+                >
+                  <Forward className="size-4 ltr:-scale-x-100" />
+                </BarButton>
+                {mine && canWrite && !m.sticker && !m.forwardedFrom && (
                   <BarButton label="ویرایش" onClick={startEdit}>
                     <Pencil className="size-4" />
+                  </BarButton>
+                )}
+                {canPin && (
+                  <BarButton
+                    label={m.pinnedAt ? "برداشتن سنجاق" : "سنجاق کردن"}
+                    onClick={() => {
+                      actions.onSelect(null);
+                      actions.onPin(m, !m.pinnedAt);
+                    }}
+                  >
+                    {m.pinnedAt ? <PinOff className="size-4" /> : <Pin className="size-4" />}
                   </BarButton>
                 )}
                 {canDelete && (
@@ -275,6 +311,15 @@ export default function MessageItem({
         )}
       </div>
     </div>
+  );
+}
+
+function PinMark() {
+  return (
+    <span className="flex items-center gap-1 text-xs text-accent" title="سنجاق‌شده">
+      <Pin className="size-3" />
+      <span className="sr-only">سنجاق‌شده</span>
+    </span>
   );
 }
 
@@ -303,7 +348,7 @@ function BarButton({
       aria-label={label}
       onClick={onClick}
       className={cn(
-        "grid size-8 place-items-center rounded-lg text-muted hover:bg-ink-700 active:scale-90",
+        "grid size-10 place-items-center rounded-full text-muted transition-colors hover:bg-ink-700 active:scale-90 md:size-8",
         danger ? "hover:text-danger" : "hover:text-fg",
       )}
     >
@@ -312,12 +357,34 @@ function BarButton({
   );
 }
 
+/** «ارسال‌شده از …»: who wrote a forwarded message and where it was first sent. */
+function ForwardedNote({ from, onOpenProfile }: { from: NonNullable<MessageDTO["forwardedFrom"]>; onOpenProfile: (userId: string) => void }) {
+  return (
+    <div className="mt-0.5 mb-1 flex max-w-full items-center gap-1.5 text-xs text-muted">
+      <Forward className="size-3.5 shrink-0 text-accent ltr:-scale-x-100" />
+      <span className="shrink-0">ارسال‌شده از</span>
+      {from.authorId ? (
+        <button onClick={() => onOpenProfile(from.authorId!)} className="shrink-0 font-semibold text-fg/80 hover:underline">
+          {from.authorName}
+        </button>
+      ) : (
+        <span className="shrink-0 font-semibold text-fg/80">{from.authorName}</span>
+      )}
+      {from.source && (
+        <span dir="auto" className="truncate">
+          · {from.source}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function ReplyQuote({ reply, onJump }: { reply: NonNullable<MessageDTO["replyTo"]>; onJump: (id: string) => void }) {
   return (
     <button
       onClick={() => !reply.deleted && onJump(reply.id)}
       disabled={reply.deleted}
-      className="mb-1 flex max-w-full items-center gap-1.5 rounded-xl border-s-2 border-accent/60 bg-ink-850/80 px-2.5 py-1.5 text-start text-xs text-muted enabled:hover:bg-ink-800"
+      className="mt-0.5 mb-1 flex max-w-full items-center gap-1.5 rounded-xl border-s-2 border-accent/60 bg-ink-800 px-2.5 py-1.5 text-start text-xs text-muted enabled:hover:bg-ink-700"
     >
       <CornerUpLeft className="size-3.5 shrink-0 text-accent ltr:-scale-x-100" />
       {reply.deleted || !reply.author ? (
@@ -399,9 +466,10 @@ function withMentions(text: string, names: string[], me: string | undefined, min
 function mark(text: string, q: string): ReactNode {
   if (!q) return text;
   const out: ReactNode[] = [];
-  const lower = text.toLowerCase();
+  // Folding keeps every index in place, so a match in the folded text marks the same span of the original.
+  const folded = foldForSearch(text);
   let from = 0;
-  for (let at = lower.indexOf(q); at !== -1; at = lower.indexOf(q, from)) {
+  for (let at = folded.indexOf(q); at !== -1; at = folded.indexOf(q, from)) {
     out.push(text.slice(from, at));
     out.push(
       <mark key={at} className="rounded bg-amber-300/80 px-0.5 text-ink-950">

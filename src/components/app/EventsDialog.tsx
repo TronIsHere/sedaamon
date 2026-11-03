@@ -62,7 +62,8 @@ export default function EventsDialog({
   onNotify: (message: string) => void;
 }) {
   const canManage = can(server.role, "event:manage");
-  const voice = channels.filter((c) => c.type === "voice");
+  // Events are for the whole server, so a private room can't be their meeting place.
+  const voice = channels.filter((c) => c.type === "voice" && !c.isPrivate);
   const [view, setView] = useState<View>(events.length || !canManage ? { kind: "list" } : { kind: "form" });
 
   if (view.kind === "form") {
@@ -96,7 +97,7 @@ export default function EventsDialog({
       {canManage && (
         <button
           onClick={() => setView({ kind: "form" })}
-          className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-accent-strong px-4 py-2.5 font-semibold text-white shadow-lg shadow-accent-strong/25 hover:bg-accent"
+          className="btn-primary mt-4 w-full"
         >
           <CalendarPlus className="size-4" />
           رویداد تازه
@@ -158,7 +159,7 @@ function EventList({
         const soon = !running && new Date(e.startsAt).getTime() - now <= SOON_MS;
         const going = e.interested.includes(meId);
         return (
-          <li key={e.id} className={cn("rounded-2xl bg-ink-950 p-4 ring-1", running ? "ring-online/40" : "ring-white/5")}>
+          <li key={e.id} className={cn("rounded-2xl bg-ink-850 p-4 ring-1", running ? "ring-online/40" : "ring-line")}>
             <div className="flex items-start gap-3">
               <div className="min-w-0 flex-1">
                 <h3 dir="auto" className="font-bold break-words">
@@ -177,7 +178,7 @@ function EventList({
             </div>
 
             {e.description && (
-              <p dir="auto" className="mt-2 text-sm leading-7 whitespace-pre-wrap break-words text-fg/90">
+              <p dir="auto" className="bidi-lines mt-2 text-sm leading-7 whitespace-pre-wrap break-words text-fg/90">
                 {e.description}
               </p>
             )}
@@ -205,7 +206,7 @@ function EventList({
                 aria-pressed={going}
                 className={cn(
                   "flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold disabled:opacity-60",
-                  going ? "bg-accent-strong text-white" : "bg-ink-800 text-muted hover:text-fg",
+                  going ? "bg-accent-strong text-on-accent" : "bg-ink-800 text-muted hover:text-fg",
                 )}
               >
                 {going && <Check className="size-4" />}
@@ -236,7 +237,7 @@ function EventList({
                   <button
                     disabled={busyId === e.id}
                     onClick={() => run(e.id, () => api(`/api/events/${e.id}`, { method: "DELETE" }))}
-                    className="rounded-xl bg-danger px-3 py-2 text-sm font-semibold text-white hover:bg-danger/90 disabled:opacity-60"
+                    className="rounded-xl bg-danger-strong px-3 py-2 text-sm font-semibold text-white hover:bg-danger-strong/90 disabled:opacity-60"
                   >
                     لغو رویداد
                   </button>
@@ -352,7 +353,7 @@ function EventForm({
           </span>
         </span>
         <textarea
-          className={cn(inputClass, "field-sizing-content max-h-40 min-h-20 resize-none leading-7")}
+          className={cn(inputClass, "bidi-lines field-sizing-content max-h-40 min-h-20 resize-none leading-7")}
           dir="auto"
           value={description}
           onChange={(e) => setDescription(e.target.value)}

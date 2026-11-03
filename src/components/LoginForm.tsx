@@ -9,9 +9,9 @@ import { toPersianDigits } from "@/lib/phone";
 type Step = "phone" | "code" | "name";
 
 const inputClass =
-  "w-full rounded-xl border border-white/5 bg-ink-950 px-3 py-2.5 text-fg outline-none placeholder:text-muted/60 focus:border-accent";
+  "field";
 const buttonClass =
-  "flex w-full items-center justify-center gap-2 rounded-xl bg-accent-strong shadow-lg shadow-accent-strong/25 px-4 py-2.5 font-semibold text-white transition hover:bg-accent disabled:opacity-60";
+  "btn-primary w-full";
 
 export default function LoginForm({ next, startWithName }: { next: string; startWithName: boolean }) {
   const router = useRouter();
@@ -64,21 +64,19 @@ export default function LoginForm({ next, startWithName }: { next: string; start
   };
 
   return (
-    <div className="w-full max-w-sm rounded-3xl border border-white/5 bg-ink-900 p-6 shadow-2xl shadow-accent-strong/10">
-      <div className="mb-6 flex items-center gap-3">
-        <span className="grid size-11 place-items-center rounded-xl bg-accent-strong/15 text-accent">
-          <AudioLines className="size-6" />
+    <div className="animate-pop-in w-full max-w-sm rounded-[2rem] bg-ink-900 p-7">
+      <div className="mb-8 text-center">
+        <span className="mx-auto grid size-16 place-items-center rounded-full bg-accent-strong text-on-accent">
+          <AudioLines className="size-8" />
         </span>
-        <div>
-          <h1 className="text-xl font-bold">صدامون</h1>
-          <p className="text-sm text-muted">گفت‌وگوی صوتی و تصویری با دوستان</p>
-        </div>
+        <h1 className="mt-4 text-2xl font-extrabold tracking-tight">صدامون</h1>
+        <p className="mt-1 text-sm text-muted">گفت‌وگوی صوتی و تصویری با دوستان</p>
       </div>
 
       {step === "phone" && (
         <form onSubmit={requestCode} className="space-y-4">
           <label className="block space-y-1.5">
-            <span className="text-sm text-muted">شماره موبایل</span>
+            <span className="text-sm font-medium text-muted">شماره موبایل</span>
             <input
               className={inputClass}
               dir="ltr"
@@ -103,7 +101,7 @@ export default function LoginForm({ next, startWithName }: { next: string; start
             کد پیامک‌شده به <span dir="ltr">{toPersianDigits(phone)}</span> را وارد کنید.
           </p>
           {devCode && (
-            <p className="rounded-lg bg-ink-800 px-3 py-2 text-sm text-muted">
+            <p className="rounded-xl bg-ink-800 px-3 py-2.5 text-sm text-muted ring-1 ring-line">
               حالت توسعه: کد <span className="font-mono text-accent">{devCode}</span> است.
             </p>
           )}
@@ -122,10 +120,10 @@ export default function LoginForm({ next, startWithName }: { next: string; start
             ورود
           </button>
           <div className="flex justify-between text-sm">
-            <button type="button" className="text-muted hover:text-fg" onClick={() => setStep("phone")}>
+            <button type="button" className="min-h-11 px-1 text-muted transition-colors hover:text-fg" onClick={() => setStep("phone")}>
               تغییر شماره
             </button>
-            <button type="button" className="text-accent hover:underline" onClick={() => requestCode()} disabled={busy}>
+            <button type="button" className="min-h-11 px-1 text-accent hover:underline disabled:opacity-50" onClick={() => requestCode()} disabled={busy}>
               ارسال دوباره کد
             </button>
           </div>
@@ -135,7 +133,7 @@ export default function LoginForm({ next, startWithName }: { next: string; start
       {step === "name" && (
         <form onSubmit={saveName} className="space-y-4">
           <label className="block space-y-1.5">
-            <span className="text-sm text-muted">نامی که دیگران می‌بینند</span>
+            <span className="text-sm font-medium text-muted">نامی که دیگران می‌بینند</span>
             <input
               className={inputClass}
               maxLength={32}
@@ -151,7 +149,11 @@ export default function LoginForm({ next, startWithName }: { next: string; start
         </form>
       )}
 
-      {error && <p className="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-4 rounded-xl bg-danger/10 px-3 py-2.5 text-sm text-danger ring-1 ring-danger/25">
+          {error}
+        </p>
+      )}
     </div>
   );
 }

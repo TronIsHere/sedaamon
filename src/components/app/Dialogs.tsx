@@ -1,34 +1,50 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import { Camera, Download, Hash, Loader2, LogOut, Trash2, Volume2, X } from "lucide-react";
+import { Camera, Download, Hash, Loader2, Lock, LogOut, Trash2, Volume2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { resizeToAvatar } from "@/lib/image";
+import { can, CUSTOM_ROLES, ROLE_LABEL } from "@/lib/permissions";
 import { useCloseOnBack, useInstallPrompt } from "@/lib/mobile";
 import { toPersianDigits } from "@/lib/phone";
 import { STATUSES } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
-import type { ChannelDTO, ChannelType, MeDTO, ServerDTO, Status } from "@/lib/types";
+import type { ChannelDTO, ChannelType, MeDTO, MemberDTO, Role, ServerDTO, Status } from "@/lib/types";
 import Avatar from "./Avatar";
 
 export const inputClass =
-  "w-full rounded-xl border border-white/5 bg-ink-950 px-3 py-2.5 outline-none placeholder:text-muted/60 focus:border-accent";
+  "field";
 
 /** Centered on larger screens, a bottom sheet on phones. */
-export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+export function Modal({
+  title,
+  onClose,
+  wide,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  /** Room for lists and cards. */
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
   useCloseOnBack(true, onClose);
   return (
-    <div className="fixed inset-0 z-40 flex items-end justify-center bg-black/60 sm:items-center sm:p-4" onClick={onClose}>
+    <div className="animate-fade-in fixed inset-0 z-40 flex items-end justify-center bg-ink-950/70 backdrop-blur-sm sm:items-center sm:p-4" onClick={onClose}>
       <div
         role="dialog"
         aria-label={title}
-        className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-3xl border border-white/5 bg-ink-900 px-5 pt-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-2xl max-sm:border-b-0 sm:rounded-3xl sm:pb-5"
+        className={cn(
+          "animate-sheet-in sm:animate-pop-in max-h-[90dvh] w-full overflow-y-auto rounded-t-3xl border border-line bg-ink-900 px-5 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-[0_-8px_40px_rgb(0_0_0/0.5)] max-sm:border-b-0 sm:rounded-3xl sm:pt-5 sm:pb-5 sm:shadow-[var(--shadow-float)]",
+          wide ? "max-w-2xl" : "max-w-md",
+        )}
         onClick={(e) => e.stopPropagation()}
       >
+        <div aria-hidden className="mx-auto mb-2 h-1 w-10 rounded-full bg-ink-600 sm:hidden" />
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold">{title}</h2>
-          <button onClick={onClose} aria-label="بستن" className="-m-1 rounded-md p-2 text-muted hover:bg-ink-800 hover:text-fg sm:m-0 sm:p-1">
+          <button onClick={onClose} aria-label="بستن" className="-m-1 grid size-11 place-items-center rounded-xl text-muted transition-colors hover:bg-ink-800 hover:text-fg sm:m-0 sm:size-9">
             <X className="size-5" />
           </button>
         </div>
@@ -49,8 +65,9 @@ export function useSubmit<T>(action: () => Promise<T>, onDone: (result: T) => vo
       onDone(await action());
     } catch (err) {
       setError((err as Error).message);
-      setBusy(false);
     }
+    // Forms that stay open after saving must be usable again.
+    setBusy(false);
   };
   return { busy, error, submit };
 }
@@ -59,7 +76,7 @@ export function SubmitButton({ busy, disabled, children }: { busy: boolean; disa
   return (
     <button
       disabled={busy || disabled}
-      className="flex w-full items-center justify-center gap-2 rounded-xl bg-accent-strong shadow-lg shadow-accent-strong/25 px-4 py-2.5 font-semibold text-white hover:bg-accent disabled:opacity-60"
+      className="btn-primary w-full"
     >
       {busy && <Loader2 className="size-4 animate-spin" />}
       {children}
@@ -80,7 +97,7 @@ export function ServerDialog({ onClose, onDone }: { onClose: () => void; onDone:
 
   return (
     <Modal title={mode === "create" ? "ساختن سرور" : "پیوستن به سرور"} onClose={onClose}>
-      <div className="mb-4 grid grid-cols-2 gap-1 rounded-full bg-ink-950 p-1 text-sm">
+      <div className="mb-4 grid grid-cols-2 gap-1 rounded-full bg-ink-850 p-1 text-sm">
         {(["create", "join"] as const).map((m) => (
           <button
             key={m}
@@ -88,7 +105,7 @@ export function ServerDialog({ onClose, onDone }: { onClose: () => void; onDone:
               setMode(m);
               setValue("");
             }}
-            className={cn("rounded-full py-2 sm:py-1.5", mode === m ? "bg-accent-strong text-white" : "text-muted hover:text-fg")}
+            className={cn("rounded-full py-2 sm:py-1.5", mode === m ? "bg-accent-strong text-on-accent" : "text-muted hover:text-fg")}
           >
             {m === "create" ? "سرور جدید" : "با لینک دعوت"}
           </button>
@@ -115,21 +132,106 @@ export function ServerDialog({ onClose, onDone }: { onClose: () => void; onDone:
   );
 }
 
+/** Who a channel is for. Public by default; private ones list the roles and people let in. */
+interface ChannelAccessValue {
+  isPrivate: boolean;
+  allowedRoles: Role[];
+  allowedMembers: string[];
+}
+
+const toggle = <T,>(list: T[], item: T) => (list.includes(item) ? list.filter((x) => x !== item) : [...list, item]);
+
+const sameAccess = (a: ChannelAccessValue, b: ChannelAccessValue) =>
+  a.isPrivate === b.isPrivate &&
+  (!a.isPrivate || (JSON.stringify([...a.allowedRoles].sort()) === JSON.stringify([...b.allowedRoles].sort()) && JSON.stringify([...a.allowedMembers].sort()) === JSON.stringify([...b.allowedMembers].sort())));
+
+function ChannelAccessFields({ value, members, onChange }: { value: ChannelAccessValue; members: MemberDTO[]; onChange: (v: ChannelAccessValue) => void }) {
+  // Whoever sees every private channel is let in anyway, so listing them would only be noise.
+  const roles = CUSTOM_ROLES.filter((r) => !can(r, "channel:view_private"));
+  const people = members.filter((m) => !can(m.role, "channel:view_private"));
+  return (
+    <div className="space-y-3">
+      <label
+        className={cn(
+          "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5",
+          value.isPrivate ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
+        )}
+      >
+        <input type="checkbox" className="sr-only" checked={value.isPrivate} onChange={(e) => onChange({ ...value, isPrivate: e.target.checked })} />
+        <Lock className="size-5 text-muted" />
+        <div>
+          <p className="font-semibold">کانال خصوصی</p>
+          <p className="text-xs text-muted">فقط مالک، مدیران، مدیران کانال و کسانی که انتخاب می‌کنید آن را می‌بینند</p>
+        </div>
+      </label>
+
+      {value.isPrivate && (
+        <>
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm text-muted">نقش‌هایی که وارد می‌شوند</legend>
+            <div className="flex flex-wrap gap-2">
+              {roles.map((r) => (
+                <label
+                  key={r}
+                  className={cn(
+                    "cursor-pointer rounded-full border px-3 py-1 text-sm",
+                    value.allowedRoles.includes(r) ? "border-accent bg-accent-strong/10" : "border-line text-muted hover:bg-ink-800",
+                  )}
+                >
+                  <input type="checkbox" className="sr-only" checked={value.allowedRoles.includes(r)} onChange={() => onChange({ ...value, allowedRoles: toggle(value.allowedRoles, r) })} />
+                  {ROLE_LABEL[r]}
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-1.5">
+            <legend className="text-sm text-muted">
+              اعضایی که وارد می‌شوند
+              {value.allowedMembers.length > 0 && <span className="ms-1 text-xs">({toPersianDigits(value.allowedMembers.length)})</span>}
+            </legend>
+            <ul className="scrollbar-thin max-h-44 space-y-0.5 overflow-y-auto rounded-xl bg-ink-850 p-1.5 ring-1 ring-line">
+              {people.map((m) => (
+                <li key={m.user.id}>
+                  <label className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-ink-850">
+                    <input
+                      type="checkbox"
+                      className="size-4 accent-[var(--color-accent-strong)]"
+                      checked={value.allowedMembers.includes(m.user.id)}
+                      onChange={() => onChange({ ...value, allowedMembers: toggle(value.allowedMembers, m.user.id) })}
+                    />
+                    <Avatar user={m.user} size="sm" />
+                    <span className="min-w-0 flex-1 truncate text-sm">{m.user.name}</span>
+                  </label>
+                </li>
+              ))}
+              {!people.length && <li className="px-2 py-3 text-center text-sm text-muted">عضو دیگری در سرور نیست</li>}
+            </ul>
+          </fieldset>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function CreateChannelDialog({
   serverId,
+  members,
   type: initialType,
   onClose,
   onDone,
 }: {
   serverId: string;
+  members: MemberDTO[];
   type: ChannelType;
   onClose: () => void;
   onDone: (c: ChannelDTO) => void;
 }) {
   const [type, setType] = useState(initialType);
   const [name, setName] = useState("");
+  const [access, setAccess] = useState<ChannelAccessValue>({ isPrivate: false, allowedRoles: [], allowedMembers: [] });
   const { busy, error, submit } = useSubmit(
-    () => api<{ channel: ChannelDTO }>(`/api/servers/${serverId}/channels`, { body: { name, type } }),
+    () => api<{ channel: ChannelDTO }>(`/api/servers/${serverId}/channels`, { body: { name, type, ...access } }),
     (res) => onDone(res.channel),
   );
 
@@ -142,7 +244,7 @@ export function CreateChannelDialog({
               key={t}
               className={cn(
                 "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5",
-                type === t ? "border-accent bg-accent-strong/10" : "border-white/5 hover:bg-ink-800",
+                type === t ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
               )}
             >
               <input type="radio" className="sr-only" checked={type === t} onChange={() => setType(t)} />
@@ -160,6 +262,7 @@ export function CreateChannelDialog({
           <span className="text-sm text-muted">نام کانال</span>
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={32} autoFocus />
         </label>
+        <ChannelAccessFields value={access} members={members} onChange={setAccess} />
         {error && <p className="text-sm text-danger">{error}</p>}
         <SubmitButton busy={busy} disabled={!name.trim()}>
           ساختن کانال
@@ -242,7 +345,7 @@ export function ProfileDialog({
 
   return (
     <Modal title="حساب کاربری" onClose={onClose}>
-      <div className="mb-5 flex items-center gap-4 rounded-2xl bg-ink-950 p-4 ring-1 ring-white/5">
+      <div className="mb-5 flex items-center gap-4 rounded-2xl bg-ink-850 p-4 ring-1 ring-line">
         <div className="relative">
           <Avatar user={{ name: name || me.name, color: me.color, avatar: me.avatar }} size="lg" />
           {photoBusy && (
@@ -303,7 +406,7 @@ export function ProfileDialog({
                 onClick={() => setStatus(s.value)}
                 className={cn(
                   "flex items-center gap-2 rounded-xl border px-3 py-2 text-sm",
-                  status === s.value ? "border-accent bg-accent-strong/10" : "border-white/5 hover:bg-ink-800",
+                  status === s.value ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
                 )}
               >
                 <span className={cn("size-2.5 rounded-full", s.dot)} />
@@ -339,7 +442,7 @@ export function ProfileDialog({
           ذخیره
         </SubmitButton>
       </form>
-      <div className="mt-5 space-y-1 border-t border-white/5 pt-4">
+      <div className="mt-5 space-y-1 border-t border-line pt-4">
         {(canPrompt || iosManual) && (
           <button
             onClick={installApp}
@@ -363,19 +466,23 @@ export function ProfileDialog({
 
 export function EditChannelDialog({
   channel,
+  members,
   onClose,
   onNotify,
 }: {
   channel: ChannelDTO;
+  members: MemberDTO[];
   onClose: () => void;
   onNotify: (message: string) => void;
 }) {
   const [name, setName] = useState(channel.name);
+  const saved: ChannelAccessValue = { isPrivate: channel.isPrivate, allowedRoles: channel.allowedRoles, allowedMembers: channel.allowedMembers };
+  const [access, setAccess] = useState<ChannelAccessValue>(saved);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // The server broadcasts the rename and the deletion, which updates every open screen including this one.
   const { busy, error, submit } = useSubmit(
-    () => api(`/api/channels/${channel.id}`, { method: "PATCH", body: { name } }),
+    () => api(`/api/channels/${channel.id}`, { method: "PATCH", body: { name, ...access } }),
     onClose,
   );
 
@@ -398,12 +505,13 @@ export function EditChannelDialog({
           <span className="text-sm text-muted">نام کانال</span>
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={32} autoFocus />
         </label>
+        <ChannelAccessFields value={access} members={members} onChange={setAccess} />
         {error && <p className="text-sm text-danger">{error}</p>}
-        <SubmitButton busy={busy} disabled={!name.trim() || name.trim() === channel.name}>
+        <SubmitButton busy={busy} disabled={!name.trim() || (name.trim() === channel.name && sameAccess(access, saved))}>
           ذخیره
         </SubmitButton>
       </form>
-      <div className="mt-5 border-t border-white/5 pt-4">
+      <div className="mt-5 border-t border-line pt-4">
         {confirmDelete ? (
           <div className="rounded-xl bg-danger/10 p-3">
             <p className="mb-2 text-sm leading-6">
@@ -414,7 +522,7 @@ export function EditChannelDialog({
               <button
                 onClick={remove}
                 disabled={deleting}
-                className="rounded-xl bg-danger px-4 py-2.5 text-sm font-semibold text-white hover:bg-danger/90 disabled:opacity-60"
+                className="rounded-xl bg-danger-strong px-4 py-2.5 text-sm font-semibold text-white hover:bg-danger-strong/90 disabled:opacity-60"
               >
                 حذف کانال
               </button>

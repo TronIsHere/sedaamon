@@ -48,7 +48,7 @@ export default function FriendsDialog({
 
   return (
     <Modal title="دوستان" onClose={onClose}>
-      <div className="mb-4 grid grid-cols-2 gap-1 rounded-full bg-ink-950 p-1 text-sm">
+      <div className="mb-4 grid grid-cols-2 gap-1 rounded-full bg-ink-850 p-1 text-sm">
         <TabButton active={tab === "friends"} onClick={() => setTab("friends")}>
           دوستان
           {!!friends?.friends.length && <span className="ms-1 text-xs opacity-70">({toPersianDigits(friends.friends.length)})</span>}
@@ -87,7 +87,7 @@ export default function FriendsDialog({
               <ul className="space-y-1">
                 {friends.incoming.map((u) => (
                   <Row key={u.id} user={u} online={!!online[u.id]} onOpen={() => onOpenProfile(u.id)}>
-                    <IconButton label="پذیرفتن" disabled={busyId === u.id} className="bg-accent-strong text-white hover:bg-accent" onClick={() => act(u.id, "PATCH")}>
+                    <IconButton label="پذیرفتن" disabled={busyId === u.id} className="bg-accent-strong text-on-accent hover:bg-accent" onClick={() => act(u.id, "PATCH")}>
                       <Check className="size-4" />
                     </IconButton>
                     <IconButton label="رد کردن" disabled={busyId === u.id} className="bg-ink-800 text-muted hover:text-danger" onClick={() => act(u.id, "DELETE")}>
@@ -122,7 +122,7 @@ export default function FriendsDialog({
 
 function TabButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className={cn("rounded-full py-2 sm:py-1.5", active ? "bg-accent-strong text-white" : "text-muted hover:text-fg")}>
+    <button onClick={onClick} className={cn("rounded-full py-2 sm:py-1.5", active ? "bg-accent-strong text-on-accent" : "text-muted hover:text-fg")}>
       {children}
     </button>
   );
