@@ -4,6 +4,7 @@ import { AtSign, BellOff, Reply, Users } from "lucide-react";
 import { cn, formatAgo } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
 import type { NotificationDTO, NotificationKind } from "@/lib/types";
+import Skeleton from "@/components/ui/skeleton";
 import Avatar from "./Avatar";
 import { Modal } from "./Dialogs";
 
@@ -36,9 +37,9 @@ export default function NotificationsDialog({
       {!notifications ? (
         <div className="space-y-3 py-2" aria-hidden>
           {[0, 1, 2].map((i) => (
-            <div key={i} className="flex animate-pulse items-center gap-3">
-              <span className="size-9 rounded-full bg-ink-800" />
-              <span className="h-3 w-40 rounded-full bg-ink-800" />
+            <div key={i} className="flex items-center gap-3">
+              <Skeleton className="size-9 rounded-full" />
+              <Skeleton className="h-3 w-40 rounded-full" />
             </div>
           ))}
         </div>

@@ -9,6 +9,7 @@ import { toPersianDigits } from "@/lib/phone";
 import { statusLabel } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
 import type { FriendState, MemberDTO, ProfileDTO, Role } from "@/lib/types";
+import Select from "@/components/ui/select";
 import Avatar from "./Avatar";
 import { BadgeShelf } from "./Badges";
 import { Modal } from "./Dialogs";
@@ -257,18 +258,18 @@ export default function ProfileCard({
               {showRoleControl && member && (
                 <label className="block space-y-1.5">
                   <span className="text-sm text-muted">نقش در سرور</span>
-                  <select
+                  <Select
                     disabled={busy}
                     value={member.role}
                     onChange={(e) => run(() => api(memberPath, { method: "PATCH", body: { role: e.target.value } }))}
-                    className="w-full rounded-xl border border-line bg-ink-850 px-3 py-2.5 text-sm outline-none focus:border-accent"
+                    className="text-sm"
                   >
                     {ASSIGNABLE_ROLES.map((r) => (
                       <option key={r} value={r}>
                         {ROLE_LABEL[r]}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   <span className="block text-xs leading-5 text-muted">{ROLE_HINT[member.role]}</span>
                 </label>
               )}
@@ -286,18 +287,18 @@ export default function ProfileCard({
                     </button>
                   ) : (
                     <div className="flex gap-2">
-                      <select
+                      <Select
                         value={muteMinutes}
                         onChange={(e) => setMuteMinutes(Number(e.target.value))}
                         aria-label="مدت بی‌صدایی"
-                        className="rounded-xl border border-line bg-ink-850 px-3 text-sm outline-none focus:border-accent"
+                        className="text-sm"
                       >
                         {MUTE_OPTIONS.map((o) => (
                           <option key={o.minutes} value={o.minutes}>
                             {o.label}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                       <button
                         disabled={busy}
                         onClick={() =>

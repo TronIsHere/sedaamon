@@ -22,6 +22,7 @@ import type {
   TypingEvent,
   UserDTO,
 } from "@/lib/types";
+import Skeleton from "@/components/ui/skeleton";
 import Avatar from "./Avatar";
 import { Modal } from "./Dialogs";
 import ForwardDialog from "./ForwardDialog";
@@ -954,13 +955,13 @@ function TypingLine({ users }: { users: UserDTO[] }) {
 
 function MessagesSkeleton() {
   return (
-    <div className="animate-pulse space-y-6 py-4" aria-hidden>
+    <div className="space-y-6 py-4" aria-hidden>
       {[60, 40, 75].map((w) => (
         <div key={w} className="flex gap-3">
-          <span className="size-9 shrink-0 rounded-full bg-ink-800" />
+          <Skeleton className="size-9 shrink-0 rounded-full" />
           <div className="flex flex-1 flex-col gap-2">
-            <span className="h-3 w-20 rounded-full bg-ink-800" />
-            <span className="h-4 rounded-full bg-ink-850" style={{ width: `${w}%` }} />
+            <Skeleton className="h-3 w-20 rounded-full" />
+            <Skeleton className="h-4 rounded-full bg-ink-850" style={{ width: `${w}%` }} />
           </div>
         </div>
       ))}

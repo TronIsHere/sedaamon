@@ -13,6 +13,7 @@ import { formatAgo } from "@/lib/format";
 import type { ChannelDTO, ChannelType, DmDTO, MeDTO, ServerDetailDTO, VoiceStates } from "@/lib/types";
 import { formatEventWhen, isRunning, useNow } from "./EventsDialog";
 import type { Unread, VoiceConnection, VoiceSettings } from "./App";
+import Skeleton from "@/components/ui/skeleton";
 import Avatar from "./Avatar";
 import { Badge } from "./ServerRail";
 import VoiceControls from "./VoiceControls";
@@ -299,12 +300,12 @@ function DmList({
 
 function SidebarSkeleton() {
   return (
-    <div className="animate-pulse space-y-2" aria-hidden>
-      <div className="mb-3 h-3 w-24 rounded-full bg-ink-800" />
+    <div className="space-y-2" aria-hidden>
+      <Skeleton className="mb-3 h-3 w-24 rounded-full" />
       {[70, 55, 80, 45].map((w) => (
         <div key={w} className="flex items-center gap-2 px-3 py-2">
-          <span className="size-4 rounded bg-ink-800" />
-          <span className="h-3 rounded-full bg-ink-800" style={{ width: `${w}%` }} />
+          <Skeleton className="size-4 rounded" />
+          <Skeleton className="h-3 rounded-full" style={{ width: `${w}%` }} />
         </div>
       ))}
     </div>

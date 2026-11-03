@@ -246,3 +246,12 @@ button:disabled {
     scroll-behavior: auto !important;
   }
 }
+
+/* iOS Safari zooms the page when a field under 16px takes focus; keep fields at 16px on touch iPhones. */
+@supports (-webkit-touch-callout: none) {
+  input,
+  textarea,
+  select {
+    font-size: max(1rem, 1em);
+  }
+}

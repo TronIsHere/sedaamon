@@ -9,6 +9,7 @@ import { can } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import type { ChannelDTO, EventDTO, ServerDTO } from "@/lib/types";
 import { inputClass, Modal, SubmitButton, useSubmit } from "./Dialogs";
+import Select from "@/components/ui/select";
 import JalaliDatePicker from "./JalaliDatePicker";
 
 /** The event is "on" from its start until this long after it. Matches the server's list window. */
@@ -297,7 +298,7 @@ function EventForm({
     onDone,
   );
 
-  const selectClass = cn(inputClass, "appearance-none text-center tabular-nums");
+  const selectClass = "text-center tabular-nums";
 
   return (
     <form onSubmit={submit} className="space-y-4">
@@ -314,34 +315,34 @@ function EventForm({
       <div className="space-y-1.5">
         <span className="text-sm text-muted">ساعت</span>
         <div className="grid grid-cols-2 gap-2" dir="ltr">
-          <select className={selectClass} value={hour} onChange={(e) => setHour(Number(e.target.value))} aria-label="ساعت">
+          <Select className={selectClass} value={hour} onChange={(e) => setHour(Number(e.target.value))} aria-label="ساعت">
             {HOURS.map((h) => (
               <option key={h} value={h}>
                 {faDigits(pad(h))}
               </option>
             ))}
-          </select>
-          <select className={selectClass} value={minute} onChange={(e) => setMinute(Number(e.target.value))} aria-label="دقیقه">
+          </Select>
+          <Select className={selectClass} value={minute} onChange={(e) => setMinute(Number(e.target.value))} aria-label="دقیقه">
             {MINUTES.map((m) => (
               <option key={m} value={m}>
                 {faDigits(pad(m))}
               </option>
             ))}
-          </select>
+          </Select>
         </div>
       </div>
 
       {voice.length > 0 && (
         <label className="block space-y-1.5">
           <span className="text-sm text-muted">کانال صوتی</span>
-          <select className={inputClass} value={channelId} onChange={(e) => setChannelId(e.target.value)}>
+          <Select value={channelId} onChange={(e) => setChannelId(e.target.value)}>
             {voice.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
               </option>
             ))}
             <option value="">بدون کانال</option>
-          </select>
+          </Select>
         </label>
       )}
 

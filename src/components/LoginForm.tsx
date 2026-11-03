@@ -4,12 +4,15 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { AudioLines, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
-import { toPersianDigits } from "@/lib/phone";
+import { nationalDigits, toPersianDigits } from "@/lib/phone";
+import OtpField from "@/components/ui/otp-field";
+import PhoneInput from "@/components/ui/phone-input";
 
 type Step = "phone" | "code" | "name";
 
 const inputClass =
   "field";
+const CODE_LENGTH = 5;
 const buttonClass =
   "btn-primary w-full";
 
@@ -77,18 +80,9 @@ export default function LoginForm({ next, startWithName }: { next: string; start
         <form onSubmit={requestCode} className="space-y-4">
           <label className="block space-y-1.5">
             <span className="text-sm font-medium text-muted">شماره موبایل</span>
-            <input
-              className={inputClass}
-              dir="ltr"
-              inputMode="tel"
-              autoComplete="tel"
-              placeholder="0912 345 6789"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-              autoFocus
-            />
+            <PhoneInput value={phone} onChange={setPhone} autoFocus />
           </label>
-          <button className={buttonClass} disabled={busy || !phone.trim()}>
+          <button className={buttonClass} disabled={busy || !/^9\d{9}$/.test(nationalDigits(phone))}>
             {busy && <Loader2 className="size-4 animate-spin" />}
             دریافت کد ورود
           </button>
@@ -105,17 +99,8 @@ export default function LoginForm({ next, startWithName }: { next: string; start
               حالت توسعه: کد <span className="font-mono text-accent">{devCode}</span> است.
             </p>
           )}
-          <input
-            className={`${inputClass} text-center text-lg tracking-[0.5em]`}
-            dir="ltr"
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            maxLength={5}
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            autoFocus
-          />
-          <button className={buttonClass} disabled={busy || code.trim().length < 5}>
+          <OtpField length={CODE_LENGTH} value={code} onChange={setCode} autoFocus />
+          <button className={buttonClass} disabled={busy || code.length < CODE_LENGTH}>
             {busy && <Loader2 className="size-4 animate-spin" />}
             ورود
           </button>
