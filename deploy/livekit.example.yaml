@@ -19,10 +19,11 @@ webhook:
     - http://127.0.0.1:3000/api/livekit/webhook
 
 # Built-in TURN relay for users behind strict NAT or networks that block UDP.
+# Mobile carriers and office Wi-Fi often allow only port 443, so relay on UDP 443 (nginx only uses TCP 443).
 turn:
   enabled: true
   domain: turn.example.ir
-  udp_port: 3478
+  udp_port: 443
   tls_port: 5349
   cert_file: /etc/ssl/sedaamon/turn.example.ir.fullchain.pem
   key_file: /etc/ssl/sedaamon/turn.example.ir.key

@@ -21,7 +21,7 @@ Self-hosted voice, video and text channels in the style of Discord, built to run
 browser ──https──▶ nginx ──▶ server.ts (Next.js 16 + Socket.io) ──▶ MongoDB
    │                 │                    ▲
    │                 └─wss─▶ LiveKit ─────┘ webhooks (who joined/left)
-   └──── UDP 50000-60000 / TCP 7881 / TURN 3478, 5349 ────▶ LiveKit (media)
+   └──── UDP 50000-60000 / TCP 7881 / TURN 443/udp, 5349 ──▶ LiveKit (media)
 ```
 
 | Piece | Path |
@@ -53,7 +53,7 @@ npm run dev
 
 Open http://localhost:3000 (or the `PORT` you set). With `SMS_PROVIDER=console` the login code is shown on the login screen and printed in the server log.
 
-The dev LiveKit config advertises your Mac's Wi-Fi IP (`en0`), so phones on the same network can join at `http://<that-ip>:3000`. Mobile browsers only allow the microphone over HTTPS, so test phones against a deployed server.
+The dev LiveKit config advertises your Mac's Wi-Fi IP (`en0`), so phones on the same network can join at `http://<that-ip>:3000`. Leave `LIVEKIT_PUBLIC_URL` empty in development: the token endpoint then points each browser at the host it opened the app on (a phone would get nothing from `localhost`). Over plain HTTP, phones can join and listen but browsers refuse the microphone, so test talking from phones against a deployed HTTPS server.
 
 ## Production (Ubuntu VPS in Iran, PM2 + nginx)
 
@@ -88,7 +88,7 @@ Open these ports:
 | 80, 443/tcp | Web app and LiveKit signaling through nginx |
 | 7881/tcp | WebRTC over TCP fallback |
 | 50000–60000/udp | WebRTC media |
-| 3478/udp, 5349/tcp | TURN relay |
+| 443/udp, 5349/tcp | TURN relay (UDP 443 gets through mobile networks that block other ports) |
 
 Keep 3000 and 7880 closed. Only nginx should reach them.
 
@@ -105,4 +105,5 @@ pm2 save && pm2 startup
 
 - **No foreign runtime dependencies.** Vazirmatn is served from `node_modules` instead of Google Fonts, and LiveKit runs with `use_external_ip: false`, so it never calls public STUN servers.
 - **Distribution.** Users open the app from your own domain in the browser. A PWA manifest and an Android APK are not built yet.
+- **Safari and iPhone.** Safari only starts sound from a tap, so joining a voice channel asks for the microphone and unlocks audio inside that tap. If the browser still holds the call's sound back (for example, after joining with the headphones muted), a bar under the header asks for one more tap. In-app browsers such as Telegram's may lack WebRTC; the app tells those users to open the link in Safari or Chrome. `LIVEKIT_PUBLIC_URL` must be `wss://` because HTTPS pages can't open `ws://` sockets.
 - **Bandwidth.** Each listener receives every speaker's audio (about 30–50 kbps per stream). Video and screen share cost far more, so size the server's uplink for them, or ask users to turn on low-data mode.
