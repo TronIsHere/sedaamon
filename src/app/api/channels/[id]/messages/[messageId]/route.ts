@@ -3,7 +3,8 @@ import { outranks } from "@/lib/permissions";
 import type { Role } from "@/lib/types";
 import { assertCanWrite, assertId, assertPermission, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
 import { serializeMessage } from "@/server/messages";
-import { Member, Message } from "@/server/models";
+import { Member, Message, Notification } from "@/server/models";
+import { keepMentions } from "@/server/notifications";
 
 type Ctx = RouteContext<"/api/channels/[id]/messages/[messageId]">;
 
@@ -28,7 +29,11 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
   if (text.length > 2000) throw new HttpError(400, "پیام نباید بیشتر از ۲۰۰۰ حرف باشد");
 
   if (text !== existing.content) {
-    const updated = await Message.findByIdAndUpdate(messageId, { content: text, editedAt: new Date() }, { new: true }).lean();
+    const updated = await Message.findByIdAndUpdate(
+      messageId,
+      { content: text, editedAt: new Date(), ...(await keepMentions(existing, text)) },
+      { new: true },
+    ).lean();
     const message = await serializeMessage(updated!);
     scope.emit("message:edit", { ...message, serverId: scope.serverId });
     return { message };
@@ -53,6 +58,7 @@ export const DELETE = handle(async (_req, ctx: Ctx) => {
   }
 
   await Message.deleteOne({ _id: messageId });
+  await Notification.deleteMany({ message: messageId });
   scope.emit("message:delete", { serverId: scope.serverId, channelId: id, messageId });
   return { ok: true };
 });

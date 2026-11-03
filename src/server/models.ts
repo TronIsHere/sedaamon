@@ -70,6 +70,9 @@ const messageSchema = new Schema(
     content: { type: String, required: true },
     editedAt: { type: Date, default: null },
     replyTo: { type: ObjectId, ref: "Message", default: null },
+    // People pinged with "@name", and whether the whole server was pinged with "@everyone".
+    mentions: { type: [{ type: ObjectId, ref: "User" }], default: [] },
+    mentionEveryone: { type: Boolean, default: false },
     reactions: {
       type: [{ _id: false, emoji: { type: String, required: true }, users: [{ type: ObjectId, ref: "User" }] }],
       default: [],
@@ -126,6 +129,24 @@ const friendshipSchema = new Schema(
 );
 friendshipSchema.index({ requester: 1, recipient: 1 }, { unique: true });
 
+// One row per person pinged by a message (mentioned, replied to, or reached by @everyone).
+const notificationSchema = new Schema(
+  {
+    user: { type: ObjectId, ref: "User", required: true },
+    kind: { type: String, enum: ["mention", "everyone", "reply"], required: true },
+    message: { type: ObjectId, ref: "Message", required: true, index: true },
+    channel: { type: ObjectId, ref: "Channel", required: true },
+    server: { type: ObjectId, ref: "Server", required: true },
+    author: { type: ObjectId, ref: "User", required: true },
+    preview: { type: String, default: "" },
+    readAt: { type: Date, default: null },
+    // TTL index: MongoDB removes the notification after two weeks.
+    expiresAt: { type: Date, required: true, expires: 0 },
+  },
+  { timestamps: true },
+);
+notificationSchema.index({ user: 1, _id: -1 });
+
 type ModelOf<S extends Schema> = Model<InferSchemaType<S>>;
 
 function getModel<S extends Schema>(name: string, schema: S): ModelOf<S> {
@@ -143,3 +164,4 @@ export const Friendship = getModel("Friendship", friendshipSchema);
 export const Avatar = getModel("Avatar", avatarSchema);
 export const Conversation = getModel("Conversation", conversationSchema);
 export const Event = getModel("Event", eventSchema);
+export const Notification = getModel("Notification", notificationSchema);

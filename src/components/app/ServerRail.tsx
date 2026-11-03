@@ -9,6 +9,7 @@ export default function ServerRail({
   servers,
   activeId,
   unread,
+  pings,
   onSelect,
   onAdd,
   friendRequests,
@@ -23,6 +24,8 @@ export default function ServerRail({
   activeId?: string;
   /** serverId → unread messages */
   unread: Record<string, number>;
+  /** serverId → unread pings (mentions and replies) */
+  pings: Record<string, number>;
   onSelect: (id: string) => void;
   onAdd: () => void;
   /** Friend requests waiting for an answer. */
@@ -76,6 +79,7 @@ export default function ServerRail({
       <div className="scrollbar-none flex w-full flex-1 flex-col items-center gap-3 overflow-y-auto py-1">
         {servers.map((s) => {
           const active = s.id === activeId;
+          const pinged = active ? 0 : (pings[s.id] ?? 0);
           const count = active ? 0 : (unread[s.id] ?? 0);
           return (
             <div key={s.id} className="relative flex w-full shrink-0 justify-center">
@@ -93,7 +97,7 @@ export default function ServerRail({
                     {s.name.trim()[0]}
                   </span>
                 )}
-                {count > 0 && <Badge count={count} className="absolute -end-1.5 -bottom-1 ring-2 ring-ink-950" />}
+                {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="absolute -end-1.5 -bottom-1 ring-2 ring-ink-950" />}
               </button>
             </div>
           );
@@ -112,11 +116,13 @@ export default function ServerRail({
   );
 }
 
-export function Badge({ count, className }: { count: number; className?: string }) {
+/** `ping` turns it red: someone named you or answered you, not just new messages. */
+export function Badge({ count, ping, className }: { count: number; ping?: boolean; className?: string }) {
   return (
     <span
       className={cn(
-        "grid h-5 min-w-5 place-items-center rounded-full bg-accent-strong px-1.5 text-[11px] leading-none font-bold text-white",
+        "grid h-5 min-w-5 place-items-center rounded-full px-1.5 text-[11px] leading-none font-bold text-white",
+        ping ? "bg-danger" : "bg-accent-strong",
         className,
       )}
     >

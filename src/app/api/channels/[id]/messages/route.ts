@@ -1,7 +1,9 @@
+import { isValidObjectId } from "mongoose";
 import { z } from "zod";
 import { assertId, assertCanWrite, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
 import { serializeMessage, serializeMessages } from "@/server/messages";
 import { Message } from "@/server/models";
+import { notifyPings, resolveMentions } from "@/server/notifications";
 
 const PAGE_SIZE = 50;
 
@@ -23,19 +25,29 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/channels/[id]/mes
   if (scope.type === "voice") throw new HttpError(400, "این کانال متنی نیست");
   assertCanWrite(scope.member);
 
-  const { content, replyTo } = z.object({ content: z.string(), replyTo: z.string().optional() }).parse(await req.json());
+  const { content, replyTo, mentions: mentionIds = [] } = z.object({ content: z.string(), replyTo: z.string().optional(), mentions: z.array(z.string()).max(50).optional() }).parse(await req.json());
   const text = content.trim();
   if (!text) throw new HttpError(400, "پیام خالی است");
   if (text.length > 2000) throw new HttpError(400, "پیام نباید بیشتر از ۲۰۰۰ حرف باشد");
 
   // A reply has to point at a message in this same channel.
-  if (replyTo && !(await Message.exists({ _id: assertId(replyTo), channel: id }))) {
-    throw new HttpError(400, "پیامی که می‌خواهید به آن پاسخ دهید پیدا نشد");
-  }
+  const target = replyTo ? await Message.findOne({ _id: assertId(replyTo), channel: id }, { author: 1 }).lean() : null;
+  if (replyTo && !target) throw new HttpError(400, "پیامی که می‌خواهید به آن پاسخ دهید پیدا نشد");
 
-  const doc = await Message.create({ channel: id, author: user._id, content: text, replyTo: replyTo ?? null });
+  const { mentions, everyone } = await resolveMentions(scope, user._id, text, mentionIds.filter(isValidObjectId));
+  const doc = await Message.create({
+    channel: id,
+    author: user._id,
+    content: text,
+    replyTo: replyTo ?? null,
+    mentions,
+    mentionEveryone: everyone,
+  });
   const message = await serializeMessage(doc.toObject());
   await scope.touch();
   scope.emit("message:new", { ...message, serverId: scope.serverId });
+  await notifyPings(scope, doc.toObject(), { mentions, everyone, replyAuthor: target?.author ?? null }).catch((err) =>
+    console.error("[notifications]", err),
+  );
   return { message };
 });

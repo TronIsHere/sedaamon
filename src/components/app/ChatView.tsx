@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { BellOff, CornerUpLeft, SearchX, SendHorizontal, X } from "lucide-react";
+import { AtSign, BellOff, CornerUpLeft, SearchX, SendHorizontal, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn, formatDateTime, formatDay, sameDay } from "@/lib/format";
+import { EVERYONE, hasMention, pingsUser } from "@/lib/mentions";
 import { isTouchDevice } from "@/lib/mobile";
 import { can, isMuted, msUntil, outranks } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
@@ -35,6 +36,10 @@ function addUnique(list: MessageDTO[], incoming: MessageDTO[]) {
 }
 
 const REPLY_PREVIEW_LENGTH = 120;
+const MENU_SIZE = 6;
+
+/** One row of the "@" menu: a member, or everyone at once. */
+type Candidate = { kind: "user"; user: UserDTO } | { kind: "everyone" };
 
 export default function ChatView({
   me,
@@ -65,13 +70,36 @@ export default function ChatView({
   const [deleting, setDeleting] = useState<MessageDTO | null>(null);
   const [flashId, setFlashId] = useState<string | null>(null);
   const [, expireMute] = useState(0);
+  const [caret, setCaret] = useState(0);
+  const [menuIndex, setMenuIndex] = useState(0);
+  /** Where the "@" menu was closed with Esc, so it stays closed for that word. */
+  const [menuClosedAt, setMenuClosedAt] = useState<number | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastTypingSent = useRef(0);
+  /** userId → name of everyone picked from the "@" menu in this chat; only those still written in the text are sent as pings. */
+  const picked = useRef(new Map<string, string>());
 
   const memberById = useMemo(() => new Map(members.map((m) => [m.user.id, m])), [members]);
   const myMember = memberById.get(me.id);
   const myRole: Role = myMember?.role ?? "member";
   const muted = isMuted(myMember?.mutedUntil);
+
+  // "@" followed by letters right before the cursor opens the member menu (not in direct messages, where there is nobody to ping).
+  const word = dm || muted ? null : /(^|[\s(])@([^\s@]*)$/u.exec(draft.slice(0, caret));
+  const wordStart = word ? caret - word[2].length - 1 : -1;
+  const candidates: Candidate[] = useMemo(() => {
+    if (!word || wordStart === menuClosedAt) return [];
+    const q = word[2].toLowerCase();
+    const people = members
+      .filter((m) => m.user.id !== me.id && m.user.name.toLowerCase().includes(q))
+      .sort((a, b) => Number(b.user.name.toLowerCase().startsWith(q)) - Number(a.user.name.toLowerCase().startsWith(q)))
+      .map((m): Candidate => ({ kind: "user", user: m.user }));
+    const everyone: Candidate[] = can(myRole, "message:mention_everyone") && EVERYONE.startsWith(q) ? [{ kind: "everyone" }] : [];
+    return [...everyone, ...people].slice(0, MENU_SIZE);
+    // `word` is derived from draft and caret.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, caret, members, me.id, myRole, menuClosedAt]);
+  const activeCandidate = Math.min(menuIndex, candidates.length - 1);
 
   // The composer unlocks by itself when the mute runs out.
   useEffect(() => {
@@ -208,7 +236,11 @@ export default function ChatView({
     setReplyTo(null);
     try {
       const res = await api<{ message: MessageDTO }>(`/api/channels/${channel.id}/messages`, {
-        body: { content, replyTo: replying?.id },
+        body: {
+          content,
+          replyTo: replying?.id,
+          mentions: [...picked.current].filter(([, name]) => hasMention(content, name)).map(([id]) => id),
+        },
       });
       setMessages((list) => addUnique(list, [res.message]));
     } catch (err) {
@@ -220,8 +252,26 @@ export default function ChatView({
     }
   };
 
-  const onDraftChange = (value: string) => {
+  const pickCandidate = (c: Candidate) => {
+    const name = c.kind === "everyone" ? EVERYONE : c.user.name;
+    if (c.kind === "user") picked.current.set(c.user.id, c.user.name);
+    const insert = `@${name} `;
+    const next = draft.slice(0, wordStart) + insert + draft.slice(caret);
+    const at = wordStart + insert.length;
+    setDraft(next);
+    setCaret(at);
+    setMenuIndex(0);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(at, at);
+    });
+  };
+
+  const onDraftChange = (value: string, cursor: number) => {
     setDraft(value);
+    setCaret(cursor);
+    setMenuIndex(0);
+    setMenuClosedAt(null);
     if (value.trim() && !muted && Date.now() - lastTypingSent.current > TYPING_SEND_MS) {
       lastTypingSent.current = Date.now();
       getSocket().emit("typing", { serverId: channel.serverId, channelId: channel.id });
@@ -229,6 +279,23 @@ export default function ChatView({
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (candidates.length && !e.nativeEvent.isComposing) {
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setMenuIndex((activeCandidate + (e.key === "ArrowDown" ? 1 : -1) + candidates.length) % candidates.length);
+        return;
+      }
+      if (e.key === "Enter" || e.key === "Tab") {
+        e.preventDefault();
+        pickCandidate(candidates[activeCandidate]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMenuClosedAt(wordStart);
+        return;
+      }
+    }
     // On phones Enter adds a new line, like other messengers; the send button sends.
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !isTouchDevice()) {
       e.preventDefault();
@@ -355,6 +422,7 @@ export default function ChatView({
                   grouped={grouped}
                   mine={mine}
                   myId={me.id}
+                  pinged={pingsUser(m, me.id)}
                   highlight={q}
                   authorRole={authorRole}
                   authorOnline={memberById.has(m.author.id) ? !!online[m.author.id] : undefined}
@@ -401,6 +469,45 @@ export default function ChatView({
                 </button>
               </div>
             )}
+            <div className="relative">
+            {candidates.length > 0 && (
+              <ul
+                role="listbox"
+                aria-label="اعضا"
+                className="absolute inset-x-0 bottom-full z-20 mb-2 overflow-hidden rounded-2xl bg-ink-800 p-1 shadow-2xl ring-1 ring-white/10"
+              >
+                {candidates.map((c, i) => (
+                  <li key={c.kind === "user" ? c.user.id : EVERYONE} role="option" aria-selected={i === activeCandidate}>
+                    <button
+                      // Keep the focus in the text box while picking.
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={() => pickCandidate(c)}
+                      className={cn(
+                        "flex w-full items-center gap-3 rounded-xl px-2 py-1.5 text-start text-sm",
+                        i === activeCandidate ? "bg-ink-700" : "hover:bg-ink-700/60",
+                      )}
+                    >
+                      {c.kind === "user" ? (
+                        <>
+                          <Avatar user={c.user} online={!!online[c.user.id]} />
+                          <span className="min-w-0 flex-1 truncate font-semibold">{c.user.name}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="grid size-9 shrink-0 place-items-center rounded-full bg-accent/15 text-accent">
+                            <AtSign className="size-4" />
+                          </span>
+                          <span className="min-w-0 flex-1 leading-5">
+                            <span className="block font-semibold">{EVERYONE}</span>
+                            <span className="block truncate text-xs text-muted">همهٔ اعضای سرور را باخبر کنید</span>
+                          </span>
+                        </>
+                      )}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             <div className="flex items-end gap-2 rounded-2xl bg-ink-850 py-1.5 ps-4 pe-1.5 ring-1 ring-white/5 transition focus-within:ring-accent/50">
               <textarea
                 ref={inputRef}
@@ -408,7 +515,8 @@ export default function ChatView({
                 rows={1}
                 value={draft}
                 maxLength={2000}
-                onChange={(e) => onDraftChange(e.target.value)}
+                onChange={(e) => onDraftChange(e.target.value, e.target.selectionStart)}
+                onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
                 onKeyDown={onKeyDown}
                 placeholder={dm ? `پیام به ${dm.name}` : `پیام به #${channel.name}`}
                 className="field-sizing-content max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm leading-7 outline-none placeholder:text-muted/70"
@@ -421,6 +529,7 @@ export default function ChatView({
               >
                 <SendHorizontal className="size-5 -scale-x-100" />
               </button>
+            </div>
             </div>
             </>
             )}

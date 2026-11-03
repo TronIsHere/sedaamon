@@ -4,12 +4,13 @@ import "@livekit/components-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoomAudioRenderer, RoomContext, useAudioPlayback } from "@livekit/components-react";
 import { DisconnectReason, LocalAudioTrack, Room, RoomEvent, Track, type RemoteTrackPublication } from "livekit-client";
-import { Hash, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, Hash, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { can, isMuted, ROLE_LABEL } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { useCloseOnBack, useSwipe } from "@/lib/mobile";
+import { pingsUser } from "@/lib/mentions";
 import { showNotification } from "@/lib/notifications";
 import { statusLine } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
@@ -25,6 +26,7 @@ import {
   type LiveMessageDTO,
   type MeDTO,
   type MemberDTO,
+  type NotificationDTO,
   type PresenceEvent,
   type UserDTO,
   type ServerDetailDTO,
@@ -39,8 +41,9 @@ import { CreateChannelDialog, EditChannelDialog, ProfileDialog, ServerDialog } f
 import EventsDialog, { formatEventWhen } from "./EventsDialog";
 import FriendsDialog from "./FriendsDialog";
 import MembersList from "./MembersList";
+import NotificationsDialog, { PING_TEXT } from "./NotificationsDialog";
 import ProfileCard from "./ProfileCard";
-import ServerRail from "./ServerRail";
+import ServerRail, { Badge } from "./ServerRail";
 import ServerSettingsDialog from "./ServerSettingsDialog";
 import VoiceBar from "./VoiceBar";
 import VoiceView from "./VoiceView";
@@ -66,13 +69,14 @@ type Dialog =
   | { kind: "serverSettings" }
   | { kind: "events" }
   | { kind: "friends" }
+  | { kind: "notifications" }
   | { kind: "user"; userId: string }
   | { kind: "channel"; type: ChannelDTO["type"] }
   | { kind: "editChannel"; channelId: string }
   | null;
 
 /** channelId → unread messages that arrived while the channel wasn't on screen */
-export type Unread = Record<string, { serverId: string; count: number }>;
+export type Unread = Record<string, { serverId: string; count: number; /** Of those, how many ping me. */ mentions: number }>;
 
 export default function App({
   me: initialMe,
@@ -100,6 +104,10 @@ export default function App({
   const [search, setSearch] = useState<string | null>(null);
   const [unread, setUnread] = useState<Unread>({});
   const [toast, setToast] = useState<string | null>(null);
+  /** Pings (mentions, @everyone, replies) newest first; null until the first load. */
+  const [notifications, setNotifications] = useState<NotificationDTO[] | null>(null);
+  /** The ping shown as a banner for a few seconds. */
+  const [pingToast, setPingToast] = useState<NotificationDTO | null>(null);
   /** userId → connected right now. Fed by server details, the friend list and live "presence" events. */
   const [online, setOnline] = useState<Record<string, boolean>>({});
   const [friends, setFriends] = useState<FriendsDTO | null>(null);
@@ -113,6 +121,7 @@ export default function App({
   const detailRef = useRef(detail);
   const connectionRef = useRef(connection);
   const dmsRef = useRef(dms);
+  const notificationsRef = useRef(notifications);
 
   const [room] = useState(
     () =>
@@ -143,6 +152,24 @@ export default function App({
   const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast((t) => (t === message ? null : t)), 5000);
+  }, []);
+
+  const refreshNotifications = useCallback(
+    () =>
+      api<{ notifications: NotificationDTO[] }>("/api/notifications")
+        .then((res) => setNotifications(res.notifications))
+        .catch(() => setNotifications((n) => n ?? [])),
+    [],
+  );
+  useEffect(() => {
+    refreshNotifications();
+  }, [refreshNotifications]);
+
+  /** Marks the pings of one channel read, on screen and on the server. */
+  const markChannelPingsRead = useCallback((channelId: string) => {
+    if (!notificationsRef.current?.some((n) => n.channelId === channelId && !n.read)) return;
+    setNotifications((list) => list && list.map((n) => (n.channelId === channelId ? { ...n, read: true } : n)));
+    api("/api/notifications", { method: "PATCH", body: { channelId } }).catch(() => {});
   }, []);
 
   const markOnline = useCallback((ids: string[], onlineIds: string[]) => {
@@ -229,6 +256,7 @@ export default function App({
         setReloadKey((k) => k + 1);
         refreshFriends();
         refreshDms();
+        refreshNotifications();
       }
       connectedOnce = true;
     };
@@ -281,6 +309,7 @@ export default function App({
       }
       if (connectionRef.current?.serverId === serverId) dropCall();
       setUnread((u) => Object.fromEntries(Object.entries(u).filter(([, v]) => v.serverId !== serverId)));
+      setNotifications((list) => list && list.filter((n) => n.serverId !== serverId));
       setDialog((d) => (d?.kind === "serverSettings" ? null : d));
       notify(deleted ? `سرور «${name}» حذف شد` : kicked ? `از سرور «${name}» اخراج شدید` : `از سرور «${name}» خارج شدید`);
     };
@@ -335,15 +364,33 @@ export default function App({
       if (m.author.id === initialMe.id) return;
       const onScreen = m.channelId === activeChannelRef.current && document.visibilityState === "visible";
       if (!onScreen) {
-        setUnread((u) => ({ ...u, [m.channelId]: { serverId: m.serverId, count: (u[m.channelId]?.count ?? 0) + 1 } }));
+        setUnread((u) => ({ ...u, [m.channelId]: { serverId: m.serverId, count: (u[m.channelId]?.count ?? 0) + 1, mentions: 0 } }));
         const serverName = serversRef.current.find((s) => s.id === m.serverId)?.name;
-        showNotification(serverName ? `${m.author.name} در ${serverName}` : m.author.name, m.content, m.channelId);
+        const title = pingsUser(m, initialMe.id)
+          ? `${m.author.name} شما را صدا زد${serverName ? ` (${serverName})` : ""}`
+          : serverName
+            ? `${m.author.name} در ${serverName}`
+            : m.author.name;
+        showNotification(title, m.content, m.channelId);
       }
     };
 
+    // Someone pinged me. The banner is for when I'm not already looking at that channel.
+    const onPing = (n: NotificationDTO) => {
+      setNotifications((list) => (list?.some((x) => x.id === n.id) ? list : [n, ...(list ?? [])]));
+      if (n.channelId === activeChannelRef.current && document.visibilityState === "visible") return;
+      setPingToast(n);
+      window.setTimeout(() => setPingToast((t) => (t?.id === n.id ? null : t)), 6000);
+    };
+    const onMessageDelete = ({ messageId }: { messageId: string }) => {
+      setNotifications((list) => list && list.filter((n) => n.messageId !== messageId));
+      setPingToast((t) => (t?.messageId === messageId ? null : t));
+    };
     if (socket.connected) connectedOnce = true;
     socket.on("connect", onConnect);
     socket.on("message:new", onMessage);
+    socket.on("notification:new", onPing);
+    socket.on("message:delete", onMessageDelete);
     socket.on("channel:new", onChannel);
     socket.on("member:new", onMember);
     socket.on("voice:state", onVoice);
@@ -363,6 +410,8 @@ export default function App({
     return () => {
       socket.off("connect", onConnect);
       socket.off("message:new", onMessage);
+      socket.off("notification:new", onPing);
+      socket.off("message:delete", onMessageDelete);
       socket.off("channel:new", onChannel);
       socket.off("member:new", onMember);
       socket.off("voice:state", onVoice);
@@ -380,7 +429,7 @@ export default function App({
       socket.off("user:update", onUserUpdate);
       socket.off("friends:changed", refreshFriends);
     };
-  }, [initialMe.id, notify, refreshFriends, refreshDms, dropCall]);
+  }, [initialMe.id, notify, refreshFriends, refreshDms, refreshNotifications, dropCall]);
 
   // The channel on screen is read; so is the active one again when the tab comes back to the front.
   useEffect(() => {
@@ -390,22 +439,33 @@ export default function App({
     detailRef.current = detail;
     connectionRef.current = connection;
     dmsRef.current = dms;
+    notificationsRef.current = notifications;
     const markRead = () => {
       const id = activeChannelRef.current;
-      if (id && document.visibilityState === "visible")
+      if (id && document.visibilityState === "visible") {
+        markChannelPingsRead(id);
         setUnread((u) => {
           if (!u[id]) return u;
           const rest = { ...u };
           delete rest[id];
           return rest;
         });
+      }
     };
     markRead();
     document.addEventListener("visibilitychange", markRead);
     return () => document.removeEventListener("visibilitychange", markRead);
-  }, [activeChannelId, servers, activeServerId, detail, connection, dms]);
+  }, [activeChannelId, servers, activeServerId, detail, connection, dms, notifications, markChannelPingsRead]);
 
-  const unreadTotal = Object.values(unread).reduce((n, u) => n + u.count, 0);
+  // Unread pings come from the saved list, so they survive a reload; the live counts only know what arrived since.
+  const unreadView: Unread = { ...unread };
+  for (const n of notifications ?? []) {
+    if (n.read) continue;
+    const entry = unreadView[n.channelId] ?? { serverId: n.serverId, count: 0, mentions: 0 };
+    unreadView[n.channelId] = { ...entry, mentions: entry.mentions + 1, count: Math.max(entry.count, entry.mentions + 1) };
+  }
+  const unreadPings = notifications?.filter((n) => !n.read).length ?? 0;
+  const unreadTotal = Object.values(unreadView).reduce((n, u) => n + u.count, 0);
   useEffect(() => {
     document.title = unreadTotal ? `(${toPersianDigits(unreadTotal)}) صدامون` : "صدامون";
   }, [unreadTotal]);
@@ -507,6 +567,28 @@ export default function App({
     setConnection(null);
   };
 
+  /** Opens the channel a ping came from. */
+  const openNotification = (n: NotificationDTO) => {
+    setDialog(null);
+    setPingToast(null);
+    setSidebarOpen(false);
+    lastChannelByServer.current[n.serverId] = n.channelId;
+    if (n.serverId === activeServerId) {
+      setSearch(null);
+      setActiveChannelId(n.channelId);
+    } else selectServer(n.serverId);
+  };
+
+  const readAllPings = () => {
+    setNotifications((list) => list && list.map((n) => ({ ...n, read: true })));
+    api("/api/notifications", { method: "PATCH", body: {} }).catch(() => {});
+  };
+
+  const clearPings = () => {
+    setNotifications([]);
+    api("/api/notifications", { method: "DELETE" }).catch(() => {});
+  };
+
   const openProfile = (userId: string) => setDialog(userId === me.id ? { kind: "profile" } : { kind: "user", userId });
 
   const selectServer = (id: string) => {
@@ -586,7 +668,11 @@ export default function App({
     else if (firstVoice) selectChannel(firstVoice);
   };
   const serverUnread: Record<string, number> = {};
-  for (const u of Object.values(unread)) serverUnread[u.serverId] = (serverUnread[u.serverId] ?? 0) + u.count;
+  const serverPings: Record<string, number> = {};
+  for (const u of Object.values(unreadView)) {
+    serverUnread[u.serverId] = (serverUnread[u.serverId] ?? 0) + u.count;
+    serverPings[u.serverId] = (serverPings[u.serverId] ?? 0) + u.mentions;
+  }
 
   return (
     <RoomContext.Provider value={room}>
@@ -614,6 +700,7 @@ export default function App({
               servers={servers}
               activeId={dmMode ? undefined : activeServerId}
               unread={serverUnread}
+              pings={serverPings}
               onSelect={selectServer}
               onAdd={() => setDialog({ kind: "server" })}
               friendRequests={friends?.incoming.length ?? 0}
@@ -633,7 +720,7 @@ export default function App({
               detail={currentDetail}
               activeChannelId={activeChannelId}
               voiceStates={voiceStates}
-              unread={unread}
+              unread={unreadView}
               connection={connection}
               joiningId={joiningId}
               settings={settings}
@@ -703,8 +790,13 @@ export default function App({
                 </>
               )}
 
-              {(currentDetail || activeDm) && (
-                <div className="ms-auto flex shrink-0 items-center gap-0.5">
+              <div className="ms-auto flex shrink-0 items-center gap-0.5">
+                  {search === null && (
+                    <HeaderButton label="اعلان‌ها" onClick={() => setDialog({ kind: "notifications" })}>
+                      <Bell className={cn("size-5", unreadPings > 0 && "text-fg")} />
+                      {unreadPings > 0 && <Badge count={unreadPings} ping className="absolute -end-0.5 -top-0.5 ring-2 ring-ink-900" />}
+                    </HeaderButton>
+                  )}
                   {(connection || firstVoice) && channel?.id !== connection?.channelId && search === null && (
                     <HeaderButton label={connection ? "بازگشت به تماس" : "شروع گفت‌وگوی صوتی"} onClick={startCall}>
                       <Phone className={cn("size-5", connection && "text-online")} />
@@ -732,8 +824,7 @@ export default function App({
                       <PanelLeft className="size-5 ltr:-scale-x-100" />
                     </HeaderButton>
                   )}
-                </div>
-              )}
+              </div>
             </header>
 
             {connection && !canPlayAudio && !deafened && (
@@ -838,6 +929,15 @@ export default function App({
             onNotify={notify}
           />
         )}
+        {dialog?.kind === "notifications" && (
+          <NotificationsDialog
+            notifications={notifications}
+            onOpen={openNotification}
+            onReadAll={readAllPings}
+            onClear={clearPings}
+            onClose={() => setDialog(null)}
+          />
+        )}
         {dialog?.kind === "friends" && (
           <FriendsDialog
             friends={friends}
@@ -881,6 +981,28 @@ export default function App({
           />
         )}
 
+        {pingToast && (
+          <button
+            onClick={() => openNotification(pingToast)}
+            className={cn(
+              "fixed left-1/2 z-50 flex w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-2xl bg-ink-800/95 px-3 py-2.5 text-start shadow-2xl ring-1 ring-accent/40 backdrop-blur",
+              toast ? "top-[calc(env(safe-area-inset-top)+8rem)]" : "top-[calc(env(safe-area-inset-top)+4.5rem)]",
+            )}
+          >
+            <Avatar user={pingToast.author} />
+            <span className="min-w-0 flex-1 leading-5">
+              <span className="block truncate text-sm">
+                <span className="font-semibold">{pingToast.author.name}</span> {PING_TEXT[pingToast.kind]}
+              </span>
+              <span dir="auto" className="block truncate text-xs text-muted">
+                {pingToast.preview}
+              </span>
+              <span className="block truncate text-[11px] text-muted/80">
+                #{pingToast.channelName} · {pingToast.serverName}
+              </span>
+            </span>
+          </button>
+        )}
         {toast && (
           <div className="fixed top-[calc(env(safe-area-inset-top)+4.5rem)] left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl bg-ink-800/95 px-4 py-2.5 text-center text-sm leading-6 shadow-2xl ring-1 ring-white/10 backdrop-blur">
             {toast}

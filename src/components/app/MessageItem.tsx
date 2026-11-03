@@ -3,6 +3,7 @@
 import { Fragment, useState, type KeyboardEvent, type ReactNode } from "react";
 import { CornerUpLeft, Pencil, Reply, SmilePlus, Trash2, X } from "lucide-react";
 import { cn, formatTime } from "@/lib/format";
+import { findMentions, mentionNames } from "@/lib/mentions";
 import { isTouchDevice } from "@/lib/mobile";
 import { REACTION_EMOJIS } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
@@ -27,6 +28,7 @@ export default function MessageItem({
   grouped,
   mine,
   myId,
+  pinged,
   highlight,
   authorRole,
   authorOnline,
@@ -42,6 +44,8 @@ export default function MessageItem({
   grouped: boolean;
   mine: boolean;
   myId: string;
+  /** The message names me, reaches everyone, or replies to me. */
+  pinged: boolean;
   highlight: string;
   authorRole: Role | undefined;
   authorOnline: boolean | undefined;
@@ -99,6 +103,7 @@ export default function MessageItem({
         "group flex gap-3 rounded-2xl transition-colors duration-700",
         mine && "flex-row-reverse",
         grouped ? "mt-1" : "mt-5",
+        pinged && "-mx-2 bg-accent/10 px-2 py-1.5 ring-1 ring-accent/30",
         flash && "bg-accent/15",
       )}
     >
@@ -163,7 +168,7 @@ export default function MessageItem({
                 !grouped && !m.replyTo && (mine ? "rounded-se-md" : "rounded-ss-md"),
               )}
             >
-              <RichText text={m.content} mine={mine} highlight={highlight} />
+              <RichText text={m.content} names={mentionNames(m)} myId={myId} mentions={m.mentions} mine={mine} highlight={highlight} />
               {m.editedAt && (
                 <span className={cn("ms-2 text-[10px]", mine ? "text-white/60" : "text-muted")} title="این پیام ویرایش شده است">
                   (ویرایش‌شده)
@@ -329,18 +334,28 @@ function ReplyQuote({ reply, onJump }: { reply: NonNullable<MessageDTO["replyTo"
   );
 }
 
-const TOKEN = /(https?:\/\/[^\s]+|@[^\s@]+)/g;
+const LINK = /(https?:\/\/[^\s]+)/g;
 
 /** Message text with clickable links, highlighted @mentions and search matches. */
-function RichText({ text, mine, highlight }: { text: string; mine: boolean; highlight: string }) {
-  return text.split(TOKEN).map((part, i) => {
-    if (i % 2 === 0) return <Fragment key={i}>{mark(part, highlight)}</Fragment>;
-    if (part.startsWith("@"))
-      return (
-        <span key={i} className={cn("rounded px-0.5 font-semibold", mine ? "bg-white/15" : "bg-accent/15 text-accent")}>
-          {mark(part, highlight)}
-        </span>
-      );
+function RichText({
+  text,
+  names,
+  mentions,
+  myId,
+  mine,
+  highlight,
+}: {
+  text: string;
+  /** What follows an "@" in this message to ping someone. */
+  names: string[];
+  mentions: MessageDTO["mentions"];
+  myId: string;
+  mine: boolean;
+  highlight: string;
+}) {
+  const me = mentions.find((x) => x.id === myId)?.name;
+  return text.split(LINK).map((part, i) => {
+    if (i % 2 === 0) return <Fragment key={i}>{withMentions(part, names, me, mine, highlight)}</Fragment>;
     return (
       <a
         key={i}
@@ -354,6 +369,31 @@ function RichText({ text, mine, highlight }: { text: string; mine: boolean; high
       </a>
     );
   });
+}
+
+function withMentions(text: string, names: string[], me: string | undefined, mine: boolean, highlight: string) {
+  const out: ReactNode[] = [];
+  let from = 0;
+  for (const { start, end } of findMentions(text, names)) {
+    out.push(mark(text.slice(from, start), highlight));
+    const label = text.slice(start, end);
+    out.push(
+      <span
+        key={start}
+        className={cn(
+          "rounded px-0.5 font-semibold",
+          mine ? "bg-white/15" : "bg-accent/15 text-accent",
+          // The one aimed at you stands out.
+          label === `@${me}` && !mine && "bg-amber-300/20 text-amber-200",
+        )}
+      >
+        {mark(label, highlight)}
+      </span>,
+    );
+    from = end;
+  }
+  out.push(mark(text.slice(from), highlight));
+  return out;
 }
 
 function mark(text: string, q: string): ReactNode {

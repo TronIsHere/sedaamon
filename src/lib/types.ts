@@ -57,6 +57,12 @@ export interface ReplyDTO {
   author: UserDTO | null;
 }
 
+/** Someone pinged by a message with "@name". */
+export interface MentionDTO {
+  id: string;
+  name: string;
+}
+
 export interface MessageDTO {
   id: string;
   channelId: string;
@@ -65,6 +71,9 @@ export interface MessageDTO {
   editedAt: string | null;
   author: UserDTO;
   replyTo: ReplyDTO | null;
+  mentions: MentionDTO[];
+  /** The whole server was pinged with "@everyone". */
+  mentionEveryone: boolean;
   reactions: ReactionDTO[];
 }
 
@@ -115,6 +124,23 @@ export interface EventDTO {
 export interface EventAlert {
   kind: "soon" | "start";
   event: EventDTO;
+}
+
+/** Why you were pinged: named in a message, reached by @everyone, or someone answered your message. */
+export type NotificationKind = "mention" | "everyone" | "reply";
+
+export interface NotificationDTO {
+  id: string;
+  kind: NotificationKind;
+  serverId: string;
+  serverName: string;
+  channelId: string;
+  channelName: string;
+  messageId: string;
+  author: UserDTO;
+  preview: string;
+  createdAt: string;
+  read: boolean;
 }
 
 export interface TypingEvent {

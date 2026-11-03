@@ -11,11 +11,12 @@ export type Permission =
   | "role:assign" // promote and demote admins
   | "server:manage" // rename the server and renew its invite link
   | "server:own" // transfer or delete the server
-  | "event:manage"; // schedule, edit and cancel events
+  | "event:manage" // schedule, edit and cancel events
+  | "message:mention_everyone"; // ping the whole server with @everyone
 
 const GRANTS: Record<Role, readonly Permission[]> = {
-  owner: ["channel:manage", "message:delete_any", "member:moderate", "role:assign", "server:manage", "server:own", "event:manage"],
-  admin: ["channel:manage", "message:delete_any", "member:moderate", "server:manage", "event:manage"],
+  owner: ["channel:manage", "message:delete_any", "member:moderate", "role:assign", "server:manage", "server:own", "event:manage", "message:mention_everyone"],
+  admin: ["channel:manage", "message:delete_any", "member:moderate", "server:manage", "event:manage", "message:mention_everyone"],
   member: [],
 };
 

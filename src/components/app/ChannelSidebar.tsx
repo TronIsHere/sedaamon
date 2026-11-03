@@ -127,11 +127,12 @@ export default function ChannelSidebar({
             <Section title="کانال‌های متنی" canAdd={canManage} onAdd={() => onAddChannel("text")}>
               {text.map((c) => {
                 const count = c.id === activeChannelId ? 0 : (unread[c.id]?.count ?? 0);
+                const pinged = c.id === activeChannelId ? 0 : (unread[c.id]?.mentions ?? 0);
                 return (
                   <ChannelButton key={c.id} active={c.id === activeChannelId} onClick={() => onSelect(c)}>
                     <Hash className="size-4 shrink-0 opacity-70" />
                     <span className={cn("truncate", count > 0 && "font-semibold text-fg")}>{c.name}</span>
-                    {count > 0 && <Badge count={count} className="ms-auto" />}
+                    {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="ms-auto" />}
                   </ChannelButton>
                 );
               })}

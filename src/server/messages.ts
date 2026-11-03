@@ -11,6 +11,8 @@ export interface MessageDoc {
   createdAt: Date;
   editedAt?: Date | null;
   replyTo?: Types.ObjectId | null;
+  mentions?: Types.ObjectId[];
+  mentionEveryone?: boolean;
   reactions?: { emoji: string; users: Types.ObjectId[] }[];
 }
 
@@ -30,7 +32,11 @@ export async function serializeMessages(docs: MessageDoc[]): Promise<MessageDTO[
     : [];
   const repliedById = new Map(replied.map((r) => [String(r._id), r]));
 
-  const authorIds = new Set([...docs.map((m) => String(m.author)), ...replied.map((r) => String(r.author))]);
+  const authorIds = new Set([
+    ...docs.map((m) => String(m.author)),
+    ...replied.map((r) => String(r.author)),
+    ...docs.flatMap((m) => (m.mentions ?? []).map(String)),
+  ]);
   const authors = await User.find({ _id: { $in: [...authorIds] } }).lean();
   const authorById = new Map(authors.map((a) => [String(a._id), a]));
 
@@ -57,6 +63,11 @@ export async function serializeMessages(docs: MessageDoc[]): Promise<MessageDTO[
         editedAt: m.editedAt ? m.editedAt.toISOString() : null,
         author: toUser(author),
         replyTo,
+        mentions: (m.mentions ?? []).flatMap((id) => {
+          const user = authorById.get(String(id));
+          return user ? [{ id: String(id), name: user.name }] : [];
+        }),
+        mentionEveryone: !!m.mentionEveryone,
         reactions: toReactions(m.reactions),
       },
     ];
