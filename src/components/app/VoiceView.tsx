@@ -1,11 +1,20 @@
 "use client";
 
-import { GridLayout, ParticipantTile, useParticipants, useTracks } from "@livekit/components-react";
+import {
+  GridLayout,
+  ParticipantTile,
+  useIsSpeaking,
+  useMaybeTrackRefContext,
+  useParticipants,
+  useTracks,
+  type TrackReferenceOrPlaceholder,
+} from "@livekit/components-react";
 import { Track, type RemoteParticipant } from "livekit-client";
-import { useEffect, useState } from "react";
-import { Loader2, MicOff, Volume2, Volume1 } from "lucide-react";
+import { createContext, useContext, useEffect, useState, type MouseEvent } from "react";
+import { Eye, EyeOff, Gauge, Loader2, Maximize, MicOff, Minimize, Pin, PinOff, Volume2, Volume1 } from "lucide-react";
 import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
+import { videoKey } from "@/lib/voice";
 import type { ChannelDTO, VoiceParticipant } from "@/lib/types";
 import type { VoiceConnection, VoiceSettings } from "./App";
 import Avatar from "./Avatar";
@@ -32,7 +41,8 @@ export default function VoiceView({
   if (connection?.channelId === channel.id) {
     return (
       <div className="bg-glow relative flex min-h-0 flex-1 flex-col">
-        <ConnectedStage participants={participants} />
+        {settings.lowData && <LowDataNotice settings={settings} />}
+        <ConnectedStage participants={participants} settings={settings} />
         <div className="flex shrink-0 justify-center px-3 pt-2 pb-safe-4 sm:pb-5">
           <div className="rounded-full bg-ink-800 p-2.5 shadow-2xl shadow-black/50">
             <VoiceControls settings={settings} onLeave={onLeave} />
@@ -84,7 +94,7 @@ export default function VoiceView({
 }
 
 /** Video tiles when anyone shares a camera or screen; otherwise big avatar cards that glow while people talk. */
-function ConnectedStage({ participants }: { participants: VoiceParticipant[] }) {
+function ConnectedStage({ participants, settings }: { participants: VoiceParticipant[]; settings: VoiceSettings }) {
   const tracks = useTracks(
     [
       { source: Track.Source.Camera, withPlaceholder: true },
@@ -124,16 +134,7 @@ function ConnectedStage({ participants }: { participants: VoiceParticipant[] }) 
     );
   }
 
-  if (hasVideo) {
-    return (
-      <div data-lk-theme="default" className="relative min-h-0 flex-1 p-2 sm:p-4" dir="ltr">
-        <GridLayout tracks={tracks} style={{ height: "100%" }}>
-          <ParticipantTile />
-        </GridLayout>
-        <ShareVolume />
-      </div>
-    );
-  }
+  if (hasVideo) return <VideoStage tracks={tracks} known={known} settings={settings} />;
 
   return (
     <div className="scrollbar-thin grid min-h-0 flex-1 content-center overflow-y-auto p-4 sm:p-8">
@@ -162,6 +163,221 @@ function ConnectedStage({ participants }: { participants: VoiceParticipant[] }) 
         ))}
       </div>
     </div>
+  );
+}
+
+/** Says low-data mode is on and what it does, with a quick way out. */
+function LowDataNotice({ settings }: { settings: VoiceSettings }) {
+  return (
+    <div className="flex shrink-0 justify-center px-3 pt-2 sm:pt-3">
+      <p className="flex max-w-full items-center gap-2 rounded-full bg-ink-800/90 py-1 ps-3 pe-1 text-xs shadow-lg">
+        <Gauge className="size-4 shrink-0 text-accent" />
+        <span className="min-w-0 truncate">حالت کم‌مصرف: تصویرها فقط به انتخاب شما و با کیفیت کمتر می‌آیند</span>
+        <button
+          onClick={() => settings.setLowData(false)}
+          className="shrink-0 rounded-full bg-ink-700 px-3 py-1 font-semibold transition hover:bg-ink-600"
+        >
+          خاموش
+        </button>
+      </p>
+    </div>
+  );
+}
+
+interface StageState {
+  focusKey: string | null;
+  setFocus: (key: string | null) => void;
+  known: Map<string, VoiceParticipant>;
+  settings: VoiceSettings;
+}
+
+const StageContext = createContext<StageState | null>(null);
+
+const keyOf = (t: TrackReferenceOrPlaceholder) => videoKey(t.participant.identity, t.source);
+
+/**
+ * Cameras and screens. Anyone can pin a feed to see it big with the rest in a strip beside it; someone else's
+ * screen share takes the big spot by itself until the person picks something else or goes back to the grid.
+ */
+function VideoStage({
+  tracks,
+  known,
+  settings,
+}: {
+  tracks: TrackReferenceOrPlaceholder[];
+  known: Map<string, VoiceParticipant>;
+  settings: VoiceSettings;
+}) {
+  const [pinned, setPinned] = useState<string | null>(null);
+  /** The screen share someone sent back to the grid, so it doesn't jump straight back to the big spot. */
+  const [dismissed, setDismissed] = useState<string | null>(null);
+
+  const autoShare = tracks.find(
+    (t) => t.source === Track.Source.ScreenShare && !t.participant.isLocal && keyOf(t) !== dismissed,
+  );
+  const focus = tracks.find((t) => keyOf(t) === pinned) ?? autoShare;
+  const focusKey = focus ? keyOf(focus) : null;
+  const others = focus ? tracks.filter((t) => t !== focus) : [];
+
+  const setFocus = (key: string | null) => {
+    if (key === null && focusKey && focusKey !== pinned) setDismissed(focusKey);
+    setPinned(key);
+  };
+
+  return (
+    <StageContext.Provider value={{ focusKey, setFocus, known, settings }}>
+      <div data-lk-theme="default" className="relative min-h-0 flex-1 p-2 sm:p-4" dir="ltr">
+        {focus ? (
+          <div className="flex size-full flex-col gap-2 lg:flex-row">
+            <div data-stage-focus className="relative min-h-0 flex-1 overflow-hidden rounded-lg bg-black">
+              <StageTile trackRef={focus} focused />
+            </div>
+            {others.length > 0 && (
+              <div className="scrollbar-thin flex h-24 shrink-0 gap-2 overflow-x-auto sm:h-28 lg:h-auto lg:w-52 lg:flex-col lg:overflow-x-hidden lg:overflow-y-auto">
+                {others.map((t) => (
+                  <div key={keyOf(t)} className="aspect-video h-full shrink-0 lg:h-auto lg:w-full">
+                    <StageTile trackRef={t} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ) : (
+          <GridLayout tracks={tracks} style={{ height: "100%" }}>
+            <StageTile />
+          </GridLayout>
+        )}
+        <ShareVolume />
+      </div>
+    </StageContext.Provider>
+  );
+}
+
+/** One feed on the stage, with buttons to pin it, show it full screen, or (in low-data mode) let it through. */
+function StageTile({ trackRef: given, focused = false }: { trackRef?: TrackReferenceOrPlaceholder; focused?: boolean }) {
+  const fromContext = useMaybeTrackRefContext();
+  const stage = useContext(StageContext)!;
+  const trackRef = (given ?? fromContext)!;
+  const key = keyOf(trackRef);
+  const { lowData, allowedVideo, setVideoAllowed } = stage.settings;
+  const live = !!trackRef.publication && !trackRef.publication.isMuted;
+  const remote = !trackRef.participant.isLocal;
+  const paused = lowData && live && remote && !allowedVideo.has(key);
+  const pinned = stage.focusKey === key;
+
+  return (
+    <div
+      className="group relative size-full"
+      // A click on a small tile brings it up big; the big one stays put so its buttons are easy to hit.
+      onClick={focused ? undefined : () => stage.setFocus(key)}
+      onDoubleClick={focused ? () => stage.setFocus(null) : undefined}
+    >
+      {paused ? <PausedTile trackRef={trackRef} large={focused} /> : <ParticipantTile trackRef={trackRef} className="size-full" />}
+      <div
+        dir="rtl"
+        className="absolute top-2 right-2 z-10 flex gap-1 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100 pointer-coarse:opacity-100"
+      >
+        {lowData && live && remote && allowedVideo.has(key) && (
+          <TileButton label="قطع دوباره تصویر (کم‌مصرف)" onClick={() => setVideoAllowed(key, false)}>
+            <EyeOff className="size-4" />
+          </TileButton>
+        )}
+        {focused && <FullscreenButton />}
+        <TileButton label={pinned ? "برگشت به نمای همه" : "سنجاق و بزرگ کردن"} onClick={() => stage.setFocus(pinned ? null : key)}>
+          {pinned ? <PinOff className="size-4" /> : <Pin className="size-4" />}
+        </TileButton>
+      </div>
+    </div>
+  );
+}
+
+/** Stands in for a camera or screen held back by low-data mode; the voice still comes through. */
+function PausedTile({ trackRef, large }: { trackRef: TrackReferenceOrPlaceholder; large: boolean }) {
+  const stage = useContext(StageContext)!;
+  const speaking = useIsSpeaking(trackRef.participant);
+  const person = stage.known.get(trackRef.participant.identity);
+  const name = trackRef.participant.name || person?.name || "?";
+  const isScreen = trackRef.source === Track.Source.ScreenShare;
+
+  return (
+    <div
+      dir="rtl"
+      className={cn(
+        "@container flex size-full flex-col items-center justify-center gap-2 rounded-lg bg-ink-800 p-2 text-center ring-2 transition",
+        speaking && !isScreen ? "ring-accent" : "ring-transparent",
+      )}
+    >
+      <Avatar
+        user={{ name, color: person?.color ?? "#6c5ce7", avatar: person?.avatar }}
+        size={large ? "lg" : "md"}
+        speaking={speaking}
+      />
+      <p className="hidden max-w-full truncate text-xs text-muted @min-[11rem]:block">
+        {isScreen ? `اشتراک صفحهٔ ${name}` : `دوربین ${name}`} برای کم‌مصرفی دریافت نمی‌شود
+      </p>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          stage.settings.setVideoAllowed(keyOf(trackRef), true);
+        }}
+        className="flex items-center gap-1.5 rounded-full bg-accent-strong px-3 py-1 text-xs font-semibold text-on-accent transition active:scale-95"
+      >
+        <Eye className="size-3.5" />
+        نمایش
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Fills the screen with the big feed. iPhones only allow a lone video element to go full screen, so the
+ * video itself takes over there.
+ */
+function FullscreenButton() {
+  const [full, setFull] = useState(false);
+
+  useEffect(() => {
+    const onChange = () => setFull(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
+  const toggle = (e: MouseEvent<HTMLButtonElement>) => {
+    if (document.fullscreenElement) return void document.exitFullscreen().catch(() => {});
+    const box = e.currentTarget.closest<HTMLElement>("[data-stage-focus]");
+    if (box?.requestFullscreen) return void box.requestFullscreen().catch(() => {});
+    const video = box?.querySelector("video") as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
+    video?.webkitEnterFullscreen?.();
+  };
+
+  return (
+    <TileButton label={full ? "خروج از تمام‌صفحه" : "تمام‌صفحه"} onClick={toggle}>
+      {full ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+    </TileButton>
+  );
+}
+
+function TileButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: (e: MouseEvent<HTMLButtonElement>) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      title={label}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e);
+      }}
+      className="grid size-8 place-items-center rounded-md bg-black/60 text-white backdrop-blur transition hover:bg-black/80 active:scale-95"
+    >
+      {children}
+    </button>
   );
 }
 

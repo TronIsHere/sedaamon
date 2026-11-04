@@ -14,7 +14,7 @@ export const PING_TEXT: Record<NotificationKind, string> = {
   reply: "به پیام شما پاسخ داد",
 };
 
-const PING_ICON = { mention: AtSign, everyone: Users, reply: Reply } as const;
+export const PING_ICON = { mention: AtSign, everyone: Users, reply: Reply } as const;
 
 /** Everything that pinged you lately: mentions, @everyone and replies. Tapping one opens the channel it came from. */
 export default function NotificationsDialog({

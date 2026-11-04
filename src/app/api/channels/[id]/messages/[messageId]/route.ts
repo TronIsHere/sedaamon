@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { outranks } from "@/lib/permissions";
 import { assertCanWrite, assertId, assertPermission, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
+import { releaseFiles } from "@/server/files";
 import { serializeMessage } from "@/server/messages";
 import { Message, Notification } from "@/server/models";
 import { keepMentions } from "@/server/notifications";
@@ -27,7 +28,8 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
 
   const { content } = z.object({ content: z.string() }).parse(await req.json());
   const text = content.trim();
-  if (!text) throw new HttpError(400, "پیام خالی است");
+  // A picture or file can stand on its own, so its caption may be cleared.
+  if (!text && !existing.attachments?.length) throw new HttpError(400, "پیام خالی است");
   if (text.length > 2000) throw new HttpError(400, "پیام نباید بیشتر از ۲۰۰۰ حرف باشد");
 
   if (text !== existing.content) {
@@ -61,6 +63,7 @@ export const DELETE = handle(async (_req, ctx: Ctx) => {
 
   await Message.deleteOne({ _id: messageId });
   await Notification.deleteMany({ message: messageId });
+  void releaseFiles((existing.attachments ?? []).map((f) => f.key));
   scope.emit("message:delete", { serverId: scope.serverId, channelId: id, messageId });
   return { ok: true };
 });

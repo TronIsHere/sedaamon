@@ -115,11 +115,33 @@ const channelSchema = new Schema(
   { timestamps: true },
 );
 
+const attachmentSchema = new Schema(
+  {
+    // Also the last part of the storage key.
+    id: { type: String, required: true },
+    // Where the bytes are kept (see storage.ts).
+    key: { type: String, required: true },
+    kind: { type: String, enum: ["image", "voice", "file"], required: true },
+    name: { type: String, required: true },
+    contentType: { type: String, required: true },
+    size: { type: Number, required: true },
+    width: Number,
+    height: Number,
+    // A tiny blurred data: URL shown before the picture is loaded.
+    preview: String,
+    // Voice notes: length in seconds, and loudness bars (0–31) drawn before anything is downloaded.
+    duration: Number,
+    waveform: { type: [Number], default: undefined },
+  },
+  { _id: false },
+);
+
 const messageSchema = new Schema(
   {
     channel: { type: ObjectId, ref: "Channel", required: true },
     author: { type: ObjectId, ref: "User", required: true },
-    content: { type: String, required: true },
+    // Empty when the message is only attachments.
+    content: { type: String, default: "" },
     editedAt: { type: Date, default: null },
     // Set while the message is pinned to its channel.
     pinnedAt: { type: Date, default: null },
@@ -138,10 +160,22 @@ const messageSchema = new Schema(
       type: [{ _id: false, emoji: { type: String, required: true }, users: [{ type: ObjectId, ref: "User" }] }],
       default: [],
     },
+    // Copied from the upload when the message is sent. A forwarded copy shares the same stored file.
+    attachments: { type: [attachmentSchema], default: [] },
   },
   { timestamps: true },
 );
 messageSchema.index({ channel: 1, _id: -1 });
+messageSchema.index({ "attachments.key": 1 });
+
+// A file uploaded to a channel but not sent yet. It joins a message when sent; the sweeper in files.ts drops unsent
+// ones after a day, together with their stored bytes (which a TTL index would leave behind).
+const uploadSchema = new Schema({
+  channel: { type: ObjectId, required: true },
+  uploader: { type: ObjectId, ref: "User", required: true },
+  file: { type: attachmentSchema, required: true },
+  expiresAt: { type: Date, required: true, index: true },
+});
 
 // Kept apart from User so the picture is only read when someone asks for it.
 const avatarSchema = new Schema({
@@ -223,6 +257,7 @@ export const ServerRole = getModel("Role", roleSchema);
 export const Category = getModel("Category", categorySchema);
 export const Channel = getModel("Channel", channelSchema);
 export const Message = getModel("Message", messageSchema);
+export const Upload = getModel("Upload", uploadSchema);
 export const Friendship = getModel("Friendship", friendshipSchema);
 export const Avatar = getModel("Avatar", avatarSchema);
 export const Conversation = getModel("Conversation", conversationSchema);

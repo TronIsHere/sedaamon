@@ -15,6 +15,7 @@ import { formatEventWhen, isRunning, useNow } from "./EventsDialog";
 import type { Unread, VoiceConnection, VoiceSettings } from "./App";
 import Skeleton from "@/components/ui/skeleton";
 import Avatar from "./Avatar";
+import ProfileMenu from "./ProfileMenu";
 import { Badge } from "./ServerRail";
 import VoiceControls from "./VoiceControls";
 
@@ -43,6 +44,7 @@ export default function ChannelSidebar({
   onEvents,
   onLeaveVoice,
   onProfile,
+  onMeChange,
   onNotify,
 }: {
   me: MeDTO;
@@ -61,7 +63,9 @@ export default function ChannelSidebar({
   onCategory: (categoryId: string | null) => void;
   onEvents: () => void;
   onLeaveVoice: () => void;
+  /** Opens the account settings (name, picture); status and bio change in the popover. */
   onProfile: () => void;
+  onMeChange: (me: MeDTO) => void;
   onNotify: (message: string) => void;
 }) {
   // Live mic/speaking state is only known for the channel we are connected to.
@@ -258,19 +262,23 @@ export default function ChannelSidebar({
         </div>
       )}
 
-      <button
-        onClick={onProfile}
-        className="group mb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center gap-3 rounded-[1.75rem] bg-ink-900 px-3 py-2.5 text-start transition-colors hover:bg-ink-800 md:mb-0"
-      >
-        <Avatar user={me} online />
-        <span className="min-w-0 flex-1 text-sm leading-5">
-          <span className="block truncate font-semibold">{me.name}</span>
-          <span dir="auto" className="block truncate text-xs text-muted">
-            {statusLine(me) || "حساب کاربری"}
-          </span>
-        </span>
-        <Settings className="size-4 shrink-0 text-muted transition group-hover:rotate-45 group-hover:text-fg" />
-      </button>
+      <ProfileMenu me={me} side="top" onMeChange={onMeChange} onSettings={onProfile} onNotify={onNotify}>
+        {(trigger) => (
+          <button
+            {...trigger}
+            className="group mb-[max(0.5rem,env(safe-area-inset-bottom))] flex items-center gap-3 rounded-[1.75rem] bg-ink-900 px-3 py-2.5 text-start transition-colors hover:bg-ink-800 aria-expanded:bg-ink-800 md:mb-0"
+          >
+            <Avatar user={me} online />
+            <span className="min-w-0 flex-1 text-sm leading-5">
+              <span className="block truncate font-semibold">{me.name}</span>
+              <span dir="auto" className="block truncate text-xs text-muted">
+                {statusLine(me) || "وضعیت خود را بگذارید"}
+              </span>
+            </span>
+            <ChevronDown className="size-4 shrink-0 rotate-180 text-muted transition group-aria-expanded:rotate-0" />
+          </button>
+        )}
+      </ProfileMenu>
     </div>
   );
 }

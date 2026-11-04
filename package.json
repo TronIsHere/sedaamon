@@ -11,6 +11,7 @@
     "livekit": "livekit-server --config livekit.dev.yaml --node-ip $(ipconfig getifaddr en0 || echo 127.0.0.1)"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1161.0",
     "@livekit/components-react": "^2.9.24",
     "@livekit/components-styles": "^1.2.0",
     "@next/env": "^16.4.4",

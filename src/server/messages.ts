@@ -1,5 +1,7 @@
 import type { Types } from "mongoose";
+import { messageSummary } from "@/lib/attachments";
 import type { MessageDTO, ReactionDTO, ReplyDTO } from "@/lib/types";
+import { toAttachments, type StoredFile } from "./files";
 import { Message, User } from "./models";
 import { toUser } from "./serialize";
 
@@ -17,6 +19,7 @@ export interface MessageDoc {
   mentions?: Types.ObjectId[];
   mentionEveryone?: boolean;
   reactions?: { emoji: string; users: Types.ObjectId[] }[];
+  attachments?: StoredFile[];
 }
 
 const PREVIEW_LENGTH = 120;
@@ -34,7 +37,7 @@ export const toReactions = (reactions: MessageDoc["reactions"]): ReactionDTO[] =
 export async function serializeMessages(docs: MessageDoc[]): Promise<MessageDTO[]> {
   const replyIds = [...new Set(docs.flatMap((m) => (m.replyTo ? [String(m.replyTo)] : [])))];
   const replied = replyIds.length
-    ? await Message.find({ _id: { $in: replyIds } }, { author: 1, content: 1 }).lean()
+    ? await Message.find({ _id: { $in: replyIds } }, { author: 1, content: 1, attachments: 1 }).lean()
     : [];
   const repliedById = new Map(replied.map((r) => [String(r._id), r]));
 
@@ -56,7 +59,7 @@ export async function serializeMessages(docs: MessageDoc[]): Promise<MessageDTO[
       const targetAuthor = target && authorById.get(String(target.author));
       replyTo =
         target && targetAuthor
-          ? { id: String(target._id), deleted: false, content: target.content.slice(0, PREVIEW_LENGTH), author: toUser(targetAuthor) }
+          ? { id: String(target._id), deleted: false, content: messageSummary(target.content, target.attachments).slice(0, PREVIEW_LENGTH), author: toUser(targetAuthor) }
           : { id: String(m.replyTo), deleted: true, content: "", author: null };
     }
 
@@ -80,6 +83,7 @@ export async function serializeMessages(docs: MessageDoc[]): Promise<MessageDTO[
         }),
         mentionEveryone: !!m.mentionEveryone,
         reactions: toReactions(m.reactions),
+        attachments: toAttachments(String(m.channel), String(m._id), m.attachments),
       },
     ];
   });

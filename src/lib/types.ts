@@ -124,6 +124,27 @@ export interface MessageDTO {
   /** The whole server was pinged with "@everyone". */
   mentionEveryone: boolean;
   reactions: ReactionDTO[];
+  attachments: AttachmentDTO[];
+}
+
+/**
+ * A picture, voice note or file sent with a message. Pictures are shown inline (once tapped), voice notes play in
+ * place (downloaded on first play), and anything else is a download.
+ */
+export interface AttachmentDTO {
+  id: string;
+  kind: "image" | "voice" | "file";
+  name: string;
+  contentType: string;
+  size: number;
+  url: string;
+  /** Pictures only: their size in pixels, so the space is held before they load, and a tiny blurred stand-in. */
+  width?: number;
+  height?: number;
+  preview?: string;
+  /** Voice notes only: seconds, and loudness bars from 0 to 31. */
+  duration?: number;
+  waveform?: number[];
 }
 
 /** A message as pushed over the socket, which also says which server it belongs to. */

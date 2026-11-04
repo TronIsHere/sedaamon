@@ -1,4 +1,5 @@
 import type { Types } from "mongoose";
+import { messageSummary } from "@/lib/attachments";
 import type { NotificationDTO, NotificationKind } from "@/lib/types";
 import { EVERYONE, findMentions, hasMention } from "@/lib/mentions";
 import { can } from "@/lib/permissions";
@@ -112,7 +113,7 @@ export async function notifyPings(
     if (!stillMember || (scope.audience && !scope.audience.has(String(ping.replyAuthor)))) kinds.delete(String(ping.replyAuthor));
   }
 
-  const preview = message.content.slice(0, PREVIEW_LENGTH);
+  const preview = messageSummary(message.content, message.attachments).slice(0, PREVIEW_LENGTH);
   const docs = await Notification.insertMany(
     [...kinds].map(([user, kind]) => ({
       user,

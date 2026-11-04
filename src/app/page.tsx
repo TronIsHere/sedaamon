@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import App from "@/components/app/App";
 import Landing from "@/components/landing/Landing";
+import { ToastProvider } from "@/components/ui/toast";
 import { currentUser } from "@/server/http";
 import { toMe } from "@/server/serialize";
 import { listServers } from "@/server/servers";
@@ -18,10 +19,12 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   const servers = await listServers(user._id);
 
   return (
-    <App
-      me={toMe(user)}
-      initialServers={servers}
-      initialServerId={typeof server === "string" && servers.some((s) => s.id === server) ? server : servers[0]?.id}
-    />
+    <ToastProvider>
+      <App
+        me={toMe(user)}
+        initialServers={servers}
+        initialServerId={typeof server === "string" && servers.some((s) => s.id === server) ? server : servers[0]?.id}
+      />
+    </ToastProvider>
   );
 }

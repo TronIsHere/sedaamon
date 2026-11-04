@@ -8,6 +8,8 @@ Self-hosted voice, video and text channels in the style of Discord, built to run
 - Servers with invite links, text channels and voice channels
 - Realtime chat (Socket.io), Jalali dates and a Persian right-to-left UI
 - Message replies, edit, delete and emoji reactions, plus typing indicators
+- Pictures and files up to 5 MB in messages, kept in an S3-compatible bucket (or on disk). Pictures are shrunk in the browser before upload and only download when tapped
+- Voice messages: hold to record, release to send (slide away to cancel). Opus at about 16 kbps, so a minute is around 120 KB, and nothing downloads until the listener presses play
 - Online presence for server members and friends
 - Profile pages (name, bio, last seen, shared servers) and friend requests between people who share a server
 - Roles: owner, admin and member. Admins manage channels, delete messages, mute and kick members below them; only the owner assigns admins

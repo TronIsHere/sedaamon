@@ -8,9 +8,8 @@ import { resizeToAvatar } from "@/lib/image";
 import { can, standingOf } from "@/lib/permissions";
 import { useCloseOnBack, useInstallPrompt } from "@/lib/mobile";
 import { toPersianDigits } from "@/lib/phone";
-import { STATUSES } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
-import type { CategoryDTO, ChannelDTO, ChannelType, MeDTO, MemberDTO, RoleDTO, ServerDTO, Status } from "@/lib/types";
+import type { CategoryDTO, ChannelDTO, ChannelType, MeDTO, MemberDTO, RoleDTO, ServerDTO } from "@/lib/types";
 import Select from "@/components/ui/select";
 import Avatar from "./Avatar";
 
@@ -327,17 +326,12 @@ export function ProfileDialog({
   onNotify: (message: string) => void;
 }) {
   const [name, setName] = useState(me.name);
-  const [bio, setBio] = useState(me.bio);
-  const [status, setStatus] = useState<Status>(me.status ?? "available");
-  const [statusText, setStatusText] = useState(me.statusText ?? "");
   const [photoBusy, setPhotoBusy] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const { canPrompt, iosManual, install } = useInstallPrompt();
   const nameChanged = name.trim() !== me.name;
-  const dirty =
-    nameChanged || bio.trim() !== me.bio || status !== (me.status ?? "available") || statusText.trim() !== (me.statusText ?? "");
   const { busy, error, submit } = useSubmit(
-    () => api<{ user: MeDTO }>("/api/me", { method: "PATCH", body: { name, bio, status, statusText } }),
+    () => api<{ user: MeDTO }>("/api/me", { method: "PATCH", body: { name } }),
     (res) => {
       // Reconnect so others see the new name on typing indicators.
       if (nameChanged) getSocket().disconnect().connect();
@@ -384,7 +378,7 @@ export function ProfileDialog({
   };
 
   return (
-    <Modal title="حساب کاربری" onClose={onClose}>
+    <Modal title="تنظیمات حساب" onClose={onClose}>
       <div className="mb-5 flex items-center gap-4 rounded-2xl bg-ink-850 p-4 ring-1 ring-line">
         <div className="relative">
           <Avatar user={{ name: name || me.name, color: me.color, avatar: me.avatar }} size="lg" />
@@ -434,51 +428,8 @@ export function ProfileDialog({
           <span className="text-sm text-muted">نامی که دیگران می‌بینند</span>
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={32} />
         </label>
-        <div className="space-y-1.5">
-          <span className="text-sm text-muted">وضعیت</span>
-          <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="وضعیت">
-            {STATUSES.map((s) => (
-              <button
-                key={s.value}
-                type="button"
-                role="radio"
-                aria-checked={status === s.value}
-                onClick={() => setStatus(s.value)}
-                className={cn(
-                  "flex items-center gap-2 rounded-xl border px-3 py-2 text-sm",
-                  status === s.value ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
-                )}
-              >
-                <span className={cn("size-2.5 rounded-full", s.dot)} />
-                {s.label}
-              </button>
-            ))}
-          </div>
-          <input
-            className={inputClass}
-            value={statusText}
-            onChange={(e) => setStatusText(e.target.value)}
-            maxLength={60}
-            placeholder="متن وضعیت، مثلاً «در حال بازی Dota 2»"
-            aria-label="متن وضعیت"
-          />
-        </div>
-        <label className="block space-y-1.5">
-          <span className="flex justify-between text-sm text-muted">
-            درباره من
-            <span className="text-xs">{toPersianDigits(bio.length)}/{toPersianDigits(190)}</span>
-          </span>
-          <textarea
-            className={cn(inputClass, "field-sizing-content max-h-40 min-h-20 resize-none leading-7")}
-            dir="auto"
-            value={bio}
-            onChange={(e) => setBio(e.target.value)}
-            maxLength={190}
-            placeholder="چند کلمه دربارهٔ خودتان بنویسید"
-          />
-        </label>
         {error && <p className="text-sm text-danger">{error}</p>}
-        <SubmitButton busy={busy} disabled={name.trim().length < 2 || !dirty}>
+        <SubmitButton busy={busy} disabled={name.trim().length < 2 || !nameChanged}>
           ذخیره
         </SubmitButton>
       </form>

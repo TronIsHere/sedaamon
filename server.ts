@@ -24,6 +24,7 @@ async function main() {
   const { syncVoiceFromLiveKit } = await import("./src/server/livekit");
   const { userConnected, userDisconnected } = await import("./src/server/presence");
   const { startEventScheduler } = await import("./src/server/events");
+  const { startUploadSweeper } = await import("./src/server/files");
 
   await connectDB();
   await migrateLegacyRoles();
@@ -92,6 +93,7 @@ async function main() {
   });
 
   startEventScheduler();
+  startUploadSweeper();
   syncVoiceFromLiveKit().catch((err) => console.warn("[livekit] presence sync skipped:", err.message));
 }
 

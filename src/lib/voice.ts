@@ -1,4 +1,10 @@
-import { createLocalAudioTrack, isBrowserSupported, type AudioCaptureOptions, type LocalAudioTrack } from "livekit-client";
+import {
+  createLocalAudioTrack,
+  isBrowserSupported,
+  Track,
+  type AudioCaptureOptions,
+  type LocalAudioTrack,
+} from "livekit-client";
 
 // Browser quirks around calls, mostly Safari and phones.
 
@@ -39,3 +45,27 @@ export function acquireMic(options?: AudioCaptureOptions): Promise<LocalAudioTra
  * the original click, so don't ask.
  */
 export const canShareScreenAudio = () => typeof navigator !== "undefined" && "userAgentData" in navigator;
+
+/**
+ * Names someone's camera or screen independent of the track id, so a choice about it (pinning, letting it through
+ * in low-data mode) survives them restarting the share. A screen's sound goes with its picture.
+ */
+export const videoKey = (identity: string, source: Track.Source) =>
+  `${identity}:${source === Track.Source.ScreenShareAudio ? Track.Source.ScreenShare : source}`;
+
+const LOW_DATA_KEY = "sedaamon:low-data";
+
+/** Low-data mode is remembered per device, since it's about this phone's connection, not the account. */
+export function readLowDataPref() {
+  try {
+    return localStorage.getItem(LOW_DATA_KEY) === "on";
+  } catch {
+    return false;
+  }
+}
+
+export function writeLowDataPref(on: boolean) {
+  try {
+    localStorage.setItem(LOW_DATA_KEY, on ? "on" : "off");
+  } catch {}
+}
