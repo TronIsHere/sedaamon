@@ -2,6 +2,7 @@ import type { Types } from "mongoose";
 import { NEWCOMER_MS } from "@/lib/badges";
 import type { Standing } from "@/lib/permissions";
 import type { BadgeId, CategoryDTO, ChannelDTO, MeDTO, MemberDTO, ServerDTO, Status, UserDTO } from "@/lib/types";
+import { isAdminPhone } from "./admins";
 
 interface UserDoc {
   _id: Types.ObjectId;
@@ -25,7 +26,7 @@ export const toUser = (u: UserDoc): UserDTO => {
   return dto;
 };
 
-export const toMe = (u: UserDoc & { phone: string }): MeDTO => ({ ...toUser(u), phone: u.phone, bio: u.bio ?? "" });
+export const toMe = (u: UserDoc & { phone: string }): MeDTO => ({ ...toUser(u), phone: u.phone, bio: u.bio ?? "", isAdmin: isAdminPhone(u.phone) });
 
 interface MemberDoc {
   owner?: boolean | null;

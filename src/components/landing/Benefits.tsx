@@ -119,8 +119,10 @@ function Cell({
     <li
       className={`landing-reveal flex flex-col overflow-hidden rounded-[1.75rem] bg-(--soft) ring-1 ring-(--hair) ${span}`}
     >
+      {/* Scenes show sample names and chat lines, not real content, so they stay out of search snippets. */}
       <div
         className={`landing-scene relative flex flex-1 items-center justify-center overflow-hidden ${scene}`}
+        data-nosnippet
       >
         {children}
       </div>

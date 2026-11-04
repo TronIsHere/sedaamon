@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Loader2, Settings, X } from "lucide-react";
+import { Loader2, Settings, ShieldCheck, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
@@ -197,6 +198,13 @@ function QuickProfile({
           {busy && <Loader2 className="size-4 animate-spin" />}
           ذخیره
         </button>
+      )}
+
+      {me.isAdmin && (
+        <Link href="/admin" className="flex min-h-11 items-center gap-2 rounded-xl border border-line px-3 text-sm transition-colors hover:bg-ink-800">
+          <ShieldCheck className="size-4 text-accent" />
+          پنل مدیریت
+        </Link>
       )}
     </div>
   );

@@ -14,51 +14,31 @@ import {
   ShieldCheck,
   Users,
 } from "lucide-react";
+import { FAQ, FEATURES, SITE, SITE_URL, STEPS, jsonLd } from "@/lib/site";
 import AppMockup from "./AppMockup";
 import Benefits from "./Benefits";
 import "./landing.css";
 
+// Anchors carry the path so the same header works on the about and policy pages.
 const NAV = [
-  { href: "#features", label: "امکانات" },
-  { href: "#how", label: "شروع کار" },
-  { href: "#why", label: "چرا صدامون" },
-  { href: "#faq", label: "پرسش‌ها" },
+  { href: "/#features", label: "امکانات" },
+  { href: "/#how", label: "شروع کار" },
+  { href: "/#why", label: "چرا صدامون" },
+  { href: "/#faq", label: "پرسش‌ها" },
 ];
 
-const MARQUEE = [
-  "تماس صوتی",
-  "تماس تصویری",
-  "اشتراک صفحه",
-  "تماشای هم‌زمان",
-  "استیکر",
-  "رویدادها",
-  "پیام سنجاق‌شده",
-  "نقش‌ها",
-  "کشف سرورها",
+const FOOTER_LINKS = [
+  { href: "/about", label: "درباره‌ی صدامون" },
+  { href: "/privacy", label: "حریم خصوصی" },
+  { href: "/terms", label: "قوانین استفاده" },
+  { href: "/login", label: "ورود به حساب" },
 ];
 
-const STEPS = [
-  {
-    title: "یک سرور بسازید",
-    text: "برای جمعتان کانال متنی و صوتی جدا بسازید.",
-    tag: "سرور و کانال",
-    color: "bg-(--raised-2) text-(--fg)",
-    icon: Hash,
-  },
-  {
-    title: "دوستانتان را دعوت کنید",
-    text: "لینک دعوت را بفرستید؛ ورود فقط با شماره‌ی موبایل است.",
-    tag: "لینک دعوت",
-    color: "bg-(--raised) text-(--fg)",
-    icon: Users,
-  },
-  {
-    title: "وارد کانال صوتی شوید",
-    text: "حرف بزنید، دوربین را روشن کنید یا صفحه‌تان را نشان دهید.",
-    tag: "صدا و تصویر",
-    color: "bg-(--lime) text-(--ink)",
-    icon: Headphones,
-  },
+// Text lives in lib/site.ts (it also feeds the HowTo schema and llms.txt); these are the matching tiles.
+const STEP_TILES = [
+  { color: "bg-(--raised-2) text-(--fg)", icon: Hash },
+  { color: "bg-(--raised) text-(--fg)", icon: Users },
+  { color: "bg-(--lime) text-(--ink)", icon: Headphones },
 ];
 
 const FACTS = [
@@ -106,36 +86,10 @@ const USES = [
   },
 ];
 
-const FAQ = [
-  {
-    q: "برای استفاده از صدامون فیلترشکن لازم است؟",
-    a: "نه. صدامون روی سرورهای داخل ایران اجرا می‌شود. ورود، پیام‌ها، صدا و تصویر و حتی فونت‌ها و آیکون‌ها همه از همان سرور می‌آیند، پس با قطع اینترنت بین‌الملل هم کار می‌کند.",
-  },
-  {
-    q: "چطور حساب بسازم؟",
-    a: "شماره‌ی موبایلتان را وارد کنید تا یک کد پیامکی برایتان بیاید. بعد از واردکردن کد، فقط یک نام انتخاب می‌کنید و آماده‌اید.",
-  },
-  {
-    q: "اگر اینترنتم ضعیف باشد چه می‌شود؟",
-    a: "حالت کم‌مصرف را روشن کنید. در این حالت تصویر دیگران دریافت نمی‌شود و صدا بدون قطعی ادامه پیدا می‌کند.",
-  },
-  {
-    q: "روی موبایل هم کار می‌کند؟",
-    a: "بله. صدامون در مرورگر موبایل باز می‌شود و می‌توانید آن را به صفحه‌ی اصلی گوشی اضافه کنید تا مثل یک برنامه اجرا شود.",
-  },
-  {
-    q: "چه کسی می‌تواند کانال بسازد یا عضوی را بیرون کند؟",
-    a: "هر سرور یک مالک دارد. مالک مدیر تعیین می‌کند و مدیرها کانال‌ها را می‌سازند، پیام پاک می‌کنند و اعضای پایین‌تر از خودشان را بی‌صدا یا اخراج می‌کنند.",
-  },
-  {
-    q: "سرورهای عمومی را کجا پیدا کنم؟",
-    a: "در بخش کشف سرورها، سرورهای عمومی بر اساس دسته‌هایی مثل بازی، موسیقی و آموزش فهرست شده‌اند و با یک کلیک عضو می‌شوید.",
-  },
-];
-
 export default function Landing() {
   return (
     <div className={`landing-root min-h-full`}>
+      <StructuredData />
       <Header />
       <main>
         <Hero />
@@ -150,6 +104,78 @@ export default function Landing() {
       <Footer />
     </div>
   );
+}
+
+/** What search engines and AI assistants read about the site: who runs it, what the app is, the FAQ and the steps. */
+function StructuredData() {
+  const org = `${SITE_URL}/#organization`;
+  const data = {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Organization",
+        "@id": org,
+        name: SITE.name,
+        alternateName: SITE.nameEn,
+        url: SITE_URL,
+        logo: `${SITE_URL}/icons/icon-512.png`,
+        description: SITE.description,
+        areaServed: { "@type": "Country", name: "Iran" },
+        ...(SITE.contactEmail && {
+          contactPoint: { "@type": "ContactPoint", contactType: "customer support", email: SITE.contactEmail },
+        }),
+      },
+      {
+        "@type": "WebSite",
+        "@id": `${SITE_URL}/#website`,
+        name: SITE.name,
+        alternateName: SITE.nameEn,
+        url: SITE_URL,
+        inLanguage: "fa-IR",
+        publisher: { "@id": org },
+      },
+      {
+        "@type": "WebApplication",
+        "@id": `${SITE_URL}/#app`,
+        name: SITE.name,
+        alternateName: SITE.nameEn,
+        url: SITE_URL,
+        description: SITE.description,
+        applicationCategory: "CommunicationApplication",
+        operatingSystem: "Web browser (Android, iOS, Windows, macOS, Linux)",
+        browserRequirements: "Requires a modern browser with WebRTC",
+        inLanguage: "fa-IR",
+        featureList: FEATURES,
+        image: `${SITE_URL}/opengraph-image.png`,
+        publisher: { "@id": org },
+      },
+      {
+        "@type": "FAQPage",
+        "@id": `${SITE_URL}/#faq`,
+        inLanguage: "fa-IR",
+        mainEntity: FAQ.map((item) => ({
+          "@type": "Question",
+          name: item.q,
+          acceptedAnswer: { "@type": "Answer", text: item.a },
+        })),
+      },
+      {
+        "@type": "HowTo",
+        "@id": `${SITE_URL}/#how`,
+        name: "شروع کار با صدامون در سه قدم",
+        inLanguage: "fa-IR",
+        totalTime: "PT1M",
+        step: STEPS.map((step, i) => ({
+          "@type": "HowToStep",
+          position: i + 1,
+          name: step.title,
+          text: step.text,
+          url: `${SITE_URL}/#how`,
+        })),
+      },
+    ],
+  };
+  return <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd(data) }} />;
 }
 
 /* ---- Pieces ----------------------------------------------------------------------------------- */
@@ -211,7 +237,7 @@ function SectionTitle({
   );
 }
 
-function Header() {
+export function Header() {
   return (
     <header className="sticky top-0 z-50 bg-(--canvas)/85 pt-safe backdrop-blur-md">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:h-20 sm:px-6">
@@ -260,9 +286,9 @@ function Hero() {
           دور هم باشید، هر جا که هستید
         </h1>
         <p className="mt-5 max-w-xl text-base leading-8 text-pretty text-(--muted) sm:text-lg">
-          سرورهای صوتی، تصویری و متنی برای دوستان، کلاس‌ها و جمع‌های بازی.
-          همه‌چیز روی شبکه‌ی داخلی اجرا می‌شود، پس با قطع اینترنت بین‌الملل هم
-          صدای هم را می‌شنوید.
+          صدامون سرورهای صوتی، تصویری و متنی برای دوستان، کلاس‌ها و جمع‌های
+          بازی است. همه‌چیز روی شبکه‌ی داخلی اجرا می‌شود، پس بدون فیلترشکن و
+          با قطع اینترنت بین‌الملل هم صدای هم را می‌شنوید.
         </p>
         <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-4">
           <PrimaryButton>همین حالا شروع کنید</PrimaryButton>
@@ -282,7 +308,10 @@ function Hero() {
 
       <div className="relative mt-24 sm:mt-28">
         <div className="landing-glow" aria-hidden />
-        <AppMockup />
+        {/* The mockup's chat lines and member counts are made up; keep them out of search snippets. */}
+        <div data-nosnippet>
+          <AppMockup />
+        </div>
         <Heart3D className="landing-float absolute -bottom-12 end-[2%] w-20 sm:-bottom-8 sm:end-[6%] sm:w-36" />
       </div>
 
@@ -293,7 +322,7 @@ function Hero() {
 
 /** A quiet, edge-faded row of feature names drifting under the mockup, where a logo row would sit. */
 function FeatureStrip() {
-  const track = [...MARQUEE, ...MARQUEE];
+  const track = [...FEATURES, ...FEATURES];
   return (
     <div className="landing-strip relative mx-auto mt-14 max-w-5xl overflow-hidden py-2 sm:mt-16">
       <div
@@ -304,7 +333,7 @@ function FeatureStrip() {
           <span key={i}>{item}</span>
         ))}
       </div>
-      <p className="sr-only">امکانات: {MARQUEE.join("، ")}</p>
+      <p className="sr-only">امکانات: {FEATURES.join("، ")}</p>
     </div>
   );
 }
@@ -343,7 +372,7 @@ function Steps() {
 
       <ol className="mx-auto mt-16 grid max-w-5xl gap-4 sm:mt-24 sm:grid-cols-3">
         {STEPS.map((step, i) => {
-          const Icon = step.icon;
+          const { color, icon: Icon } = STEP_TILES[i];
           return (
             <li
               key={step.title}
@@ -356,7 +385,7 @@ function Steps() {
                 </p>
               </div>
               <div
-                className={`${step.color} relative flex aspect-[4/3] flex-col justify-between overflow-hidden rounded-2xl p-4`}
+                className={`${color} relative flex aspect-[4/3] flex-col justify-between overflow-hidden rounded-2xl p-4`}
               >
                 <span className="self-start rounded-full bg-black/20 px-3 py-1 text-xs font-medium">
                   {step.tag}
@@ -559,7 +588,7 @@ function Cta() {
             همین حالا شروع کنید
           </Link>
         </div>
-        <div className="relative h-64 md:h-auto" aria-hidden>
+        <div className="relative h-64 md:h-auto" aria-hidden data-nosnippet>
           <div className="absolute inset-0 m-auto size-72 rounded-full border border-white/10" />
           <div
             className={`landing-sphere landing-float-slow absolute start-[20%] top-[18%] size-24 rounded-full sm:size-32`}
@@ -578,14 +607,18 @@ function Cta() {
   );
 }
 
-function Footer() {
+export function Footer() {
   return (
-    <footer className="mx-auto mt-24 flex max-w-6xl flex-col items-center justify-between gap-4 border-t border-(--hair) px-4 pt-8 pb-[max(2rem,env(safe-area-inset-bottom))] text-sm text-(--muted) sm:flex-row sm:px-6">
+    <footer className="mx-auto mt-24 flex max-w-6xl flex-col items-center justify-between gap-4 border-t border-(--hair) px-4 pt-8 pb-[max(2rem,env(safe-area-inset-bottom))] text-sm text-(--muted) md:flex-row sm:px-6">
       <Logo />
       <p>صدامون، ساخته‌شده برای شبکه‌ی داخلی</p>
-      <Link href="/login" className="rounded-lg hover:text-(--lime)">
-        ورود به حساب
-      </Link>
+      <nav aria-label="پیوندهای صدامون" className="flex flex-wrap justify-center gap-x-5 gap-y-2">
+        {FOOTER_LINKS.map((link) => (
+          <Link key={link.href} href={link.href} className="rounded-lg hover:text-(--lime)">
+            {link.label}
+          </Link>
+        ))}
+      </nav>
     </footer>
   );
 }

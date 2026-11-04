@@ -1,8 +1,12 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import JoinInvite from "@/components/JoinInvite";
 import { currentUser } from "@/server/http";
 import { Member } from "@/server/models";
 import { findServerByInvite } from "@/server/servers";
+
+// Invite links are private to whoever received them.
+export const metadata: Metadata = { title: "دعوت", robots: { index: false, follow: false } };
 
 // Every page here depends on the session cookie, so render on each request.
 export const instant = false;

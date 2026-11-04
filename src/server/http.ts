@@ -7,6 +7,7 @@ import { DM_SCOPE } from "@/lib/types";
 import { connectDB } from "./db";
 import { HttpError } from "./errors";
 import { channelAudience, memberCanView } from "./access";
+import { isAdminPhone } from "./admins";
 import { Channel, Conversation } from "./models";
 import { emitToAudience, emitToUsers } from "./realtime";
 import { findMemberWithStanding } from "./roles";
@@ -40,6 +41,13 @@ export async function currentUser() {
 export async function requireUser() {
   const user = await currentUser();
   if (!user) throw new HttpError(401, "ابتدا وارد حساب خود شوید");
+  return user;
+}
+
+/** The site admin, for /api/admin. Anyone else is told the route doesn't exist. */
+export async function requireAdmin() {
+  const user = await requireUser();
+  if (!isAdminPhone(user.phone)) throw new HttpError(404, "پیدا نشد");
   return user;
 }
 

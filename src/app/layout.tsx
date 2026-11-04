@@ -3,11 +3,22 @@ import type { Metadata, Viewport } from "next";
 import "vazirmatn/Vazirmatn-Variable-font-face.css";
 import "./globals.css";
 import ServiceWorker from "@/components/ServiceWorker";
+import { SITE, SITE_URL } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "صدامون",
-  description: "سرورهای صوتی و تصویری برای گروه‌ها",
-  applicationName: "صدامون",
+  metadataBase: new URL(SITE_URL),
+  // Pages set a short title ("ورود") and the template adds the brand.
+  title: { default: SITE.title, template: `%s · ${SITE.name}` },
+  description: SITE.description,
+  applicationName: SITE.name,
+  openGraph: {
+    type: "website",
+    locale: "fa_IR",
+    siteName: SITE.name,
+    title: SITE.title,
+    description: SITE.description,
+  },
+  twitter: { card: "summary_large_image", title: SITE.title, description: SITE.description },
   appleWebApp: {
     capable: true,
     title: "صدامون",

@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import App from "@/components/app/App";
 import Landing from "@/components/landing/Landing";
@@ -5,6 +6,10 @@ import { ToastProvider } from "@/components/ui/toast";
 import { currentUser } from "@/server/http";
 import { toMe } from "@/server/serialize";
 import { listServers } from "@/server/servers";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+};
 
 // Every page here depends on the session cookie, so render on each request.
 export const instant = false;

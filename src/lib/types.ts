@@ -21,6 +21,8 @@ export interface UserDTO {
 export interface MeDTO extends UserDTO {
   phone: string;
   bio: string;
+  /** Whether this person can open the site's admin panel (/admin). */
+  isAdmin?: boolean;
 }
 
 export interface ServerDTO {
@@ -313,4 +315,70 @@ export interface ProfileDTO extends UserDTO {
   lastSeenAt: string | null;
   friendState: FriendState;
   mutualServers: { id: string; name: string }[];
+}
+
+// ---- Admin panel ---------------------------------------------------------------------------------
+
+export interface AdminStatsDTO {
+  users: number;
+  /** Signed up in the last 7 days. */
+  newUsers: number;
+  servers: number;
+  publicServers: number;
+  channels: number;
+  voiceChannels: number;
+  messages: number;
+  /** Sent in the last 7 days. */
+  messagesWeek: number;
+  online: number;
+  inVoice: number;
+}
+
+export interface AdminUserDTO {
+  id: string;
+  name: string;
+  phone: string;
+  color: string;
+  avatar: string | null;
+  bio: string;
+  createdAt: string;
+  lastSeenAt: string | null;
+  online: boolean;
+  servers: number;
+  ownedServers: number;
+  isAdmin: boolean;
+}
+
+export interface AdminServerDTO {
+  id: string;
+  name: string;
+  inviteCode: string;
+  isPublic: boolean;
+  category: string;
+  createdAt: string;
+  owner: { id: string; name: string; phone: string } | null;
+  members: number;
+  channels: number;
+}
+
+export interface AdminChannelDTO {
+  id: string;
+  name: string;
+  type: ChannelType;
+  isPrivate: boolean;
+  createdAt: string;
+  server: { id: string; name: string };
+  messages: number;
+  inVoice: number;
+}
+
+export interface AdminMessageDTO {
+  id: string;
+  content: string;
+  sticker: string | null;
+  attachments: number;
+  createdAt: string;
+  author: { id: string; name: string; phone: string; color: string } | null;
+  channel: { id: string; name: string };
+  server: { id: string; name: string };
 }
