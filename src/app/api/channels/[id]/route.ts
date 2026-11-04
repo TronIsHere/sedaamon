@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { channelAudience } from "@/server/access";
 import { broadcastChannelChange, channelAccessInput, detachEvents, membersOf } from "@/server/channels";
+import { filesOfChannels, releaseFiles } from "@/server/files";
 import { assertPermission, handle, HttpError, requireChannelAccess, requireUser } from "@/server/http";
 import { Channel, Event, Message } from "@/server/models";
 import { emitToAudience } from "@/server/realtime";
@@ -60,7 +61,9 @@ export const DELETE = handle(async (_req, ctx: RouteContext<"/api/channels/[id]"
 
   const audience = await channelAudience(channel);
 
+  const files = await filesOfChannels([id]);
   await Promise.all([Channel.deleteOne({ _id: id }), Message.deleteMany({ channel: id }), Event.updateMany({ channel: id }, { channel: null })]);
+  void releaseFiles(files);
   emitToAudience(serverId, audience, "channel:delete", { serverId, channelId: id });
   return { ok: true };
 });

@@ -5,6 +5,7 @@ import { foldForSearch, matchesSearch } from "@/lib/search";
 import type { DiscoverDTO, DiscoverySettingsDTO, MemberDTO, Role, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
 import { memberCanView } from "./access";
 import { listEvents } from "./events";
+import { filesOfChannels, releaseFiles } from "./files";
 import { announceJoin } from "./presence";
 import { HttpError, requireMember } from "./http";
 import { closeVoiceRooms } from "./livekit";
@@ -302,6 +303,7 @@ export async function deleteServer(serverId: string) {
   for (const id of voiceIds) clearVoiceChannel(serverId, id);
   await closeVoiceRooms(voiceIds);
 
+  const files = await filesOfChannels(channelIds);
   await Promise.all([
     Message.deleteMany({ channel: { $in: channelIds } }),
     Channel.deleteMany({ server: serverId }),
@@ -309,4 +311,5 @@ export async function deleteServer(serverId: string) {
     Event.deleteMany({ server: serverId }),
   ]);
   await Server.deleteOne({ _id: serverId });
+  void releaseFiles(files);
 }

@@ -178,7 +178,7 @@ export default function VoiceControls({
             </ControlButton>
             <ControlButton
               className={size}
-              label={settings.lowData ? "خاموش کردن حالت کم‌مصرف" : "حالت کم‌مصرف: فقط صدا دریافت شود"}
+              label={settings.lowData ? "خاموش کردن حالت کم‌مصرف" : "حالت کم‌مصرف: فقط صدا؛ تصویرها به انتخاب شما"}
               active={settings.lowData}
               onClick={() => settings.setLowData(!settings.lowData)}
             >

@@ -1,7 +1,9 @@
 import { isValidObjectId } from "mongoose";
 import { z } from "zod";
+import { MAX_ATTACHMENTS } from "@/lib/attachments";
 import { findSticker } from "@/lib/stickers";
 import { assertId, assertCanWrite, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
+import { claimUploads } from "@/server/files";
 import { serializeMessage, serializeMessages } from "@/server/messages";
 import { Message } from "@/server/models";
 import { notifyPings, resolveMentions } from "@/server/notifications";
@@ -60,20 +62,28 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/channels/[id]/mes
   if (scope.type === "voice") throw new HttpError(400, "این کانال متنی نیست");
   assertCanWrite(scope.member);
 
-  const { content = "", sticker: stickerId, replyTo, mentions: mentionIds = [] } = z
-    .object({ content: z.string().optional(), sticker: z.string().optional(), replyTo: z.string().optional(), mentions: z.array(z.string()).max(50).optional() })
+  const { content = "", sticker: stickerId, replyTo, mentions: mentionIds = [], attachments: fileIds = [] } = z
+    .object({
+      content: z.string().optional(),
+      sticker: z.string().optional(),
+      replyTo: z.string().optional(),
+      mentions: z.array(z.string()).max(50).optional(),
+      attachments: z.array(z.string()).max(MAX_ATTACHMENTS).optional(),
+    })
     .parse(await req.json());
   // A sticker message carries the sticker's own text, so it reads naturally in previews, replies and search.
   const sticker = stickerId ? findSticker(stickerId)?.sticker : null;
   if (stickerId && !sticker) throw new HttpError(400, "این استیکر پیدا نشد");
   const text = sticker ? sticker.text : content.trim();
-  if (!text) throw new HttpError(400, "پیام خالی است");
+  if (!text && !fileIds.length) throw new HttpError(400, "پیام خالی است");
   if (text.length > 2000) throw new HttpError(400, "پیام نباید بیشتر از ۲۰۰۰ حرف باشد");
 
   // A reply has to point at a message in this same channel.
   const target = replyTo ? await Message.findOne({ _id: assertId(replyTo), channel: id }, { author: 1 }).lean() : null;
   if (replyTo && !target) throw new HttpError(400, "پیامی که می‌خواهید به آن پاسخ دهید پیدا نشد");
 
+  // Claimed last, once nothing else can turn the message down, so a refused message leaves its files pending.
+  const attachments = sticker ? [] : await claimUploads(user._id, id, fileIds);
   const { mentions, everyone } = await resolveMentions(scope, user._id, text, sticker ? [] : mentionIds.filter(isValidObjectId));
   const doc = await Message.create({
     channel: id,
@@ -83,6 +93,7 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/channels/[id]/mes
     replyTo: replyTo ?? null,
     mentions,
     mentionEveryone: everyone,
+    attachments,
   });
   const message = await serializeMessage(doc.toObject());
   await scope.touch();

@@ -9,6 +9,7 @@ import { REACTION_EMOJIS } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { foldForSearch } from "@/lib/search";
 import type { BadgeId, MessageDTO, Role } from "@/lib/types";
+import MessageAttachments from "./Attachments";
 import Avatar from "./Avatar";
 import { BadgeIcon } from "./Badges";
 import { RoleIcon } from "./RoleBadge";
@@ -79,7 +80,8 @@ export default function MessageItem({
   const saveEdit = async () => {
     if (!editing || editing.busy) return;
     const text = editing.text.trim();
-    if (!text) return;
+    // A picture or file can stand without a caption.
+    if (!text && !m.attachments.length) return;
     if (text === m.content) return setEditing(null);
     setEditing({ ...editing, busy: true, error: undefined });
     try {
@@ -99,8 +101,8 @@ export default function MessageItem({
   };
 
   const toggleSelect = (e: React.MouseEvent) => {
-    // Phones have no hover, so a tap on the bubble reveals the action bar. Links keep working.
-    if (!isTouchDevice() || (e.target as HTMLElement).closest("a")) return;
+    // Phones have no hover, so a tap on the bubble reveals the action bar. Links and buttons keep working.
+    if (!isTouchDevice() || (e.target as HTMLElement).closest("a, button")) return;
     actions.onSelect(selected ? null : m.id);
   };
 
@@ -165,7 +167,7 @@ export default function MessageItem({
                   </button>
                   <button
                     onClick={saveEdit}
-                    disabled={editing.busy || !editing.text.trim()}
+                    disabled={editing.busy || (!editing.text.trim() && !m.attachments.length)}
                     className="rounded-lg bg-accent-strong px-3 py-1.5 text-xs font-semibold text-on-accent hover:bg-accent disabled:opacity-50"
                   >
                     ذخیره
@@ -177,7 +179,7 @@ export default function MessageItem({
             <span onClick={toggleSelect} className="block">
               <StickerArt id={m.sticker} size={136} />
             </span>
-          ) : (
+          ) : (m.content || m.editedAt) ? (
             <p
               dir="auto"
               onClick={toggleSelect}
@@ -192,6 +194,9 @@ export default function MessageItem({
                 </span>
               )}
             </p>
+          ) : (
+            // Only attachments: an empty strip still takes the tap that opens the action bar on phones.
+            <span onClick={toggleSelect} className="min-w-0 flex-1 self-stretch" />
           )}
           {grouped && !editing && (
             <span className="ms-auto mt-1 shrink-0 text-[11px] text-muted opacity-0 transition group-hover:opacity-100">
@@ -199,6 +204,12 @@ export default function MessageItem({
             </span>
           )}
         </div>
+
+        {m.attachments.length > 0 && (
+          <div onClick={toggleSelect} className="w-full">
+            <MessageAttachments attachments={m.attachments} />
+          </div>
+        )}
 
         {m.reactions.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1">

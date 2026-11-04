@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Check, Hash, Loader2, Search, SendHorizontal } from "lucide-react";
 import { api } from "@/lib/api";
+import { messageSummary } from "@/lib/attachments";
 import { cn } from "@/lib/format";
 import { foldForSearch, matchesSearch } from "@/lib/search";
 import type { ForwardTargetsDTO, MessageDTO } from "@/lib/types";
@@ -71,7 +72,7 @@ export default function ForwardDialog({
       <div className="mb-3 rounded-xl border-s-2 border-accent/60 bg-ink-850 px-3 py-2 text-xs ring-1 ring-line">
         <span className="font-semibold text-fg/80">{message.forwardedFrom?.authorName ?? message.author.name}</span>
         <span dir="auto" className="mt-0.5 line-clamp-2 block leading-6 break-words text-muted">
-          {message.content}
+          {messageSummary(message.content, message.attachments)}
         </span>
       </div>
 

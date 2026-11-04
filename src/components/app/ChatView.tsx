@@ -1,15 +1,20 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
-import { AtSign, BellOff, ChevronDown, CornerUpLeft, Pin, ScrollText, SearchX, SendHorizontal, Sticker as StickerIcon, X } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
+import { AtSign, BellOff, ChevronDown, CornerUpLeft, FileText, Paperclip, Pin, ScrollText, SearchX, SendHorizontal, Sticker as StickerIcon, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { formatBytes, IMAGE_TYPES, MAX_ATTACHMENTS, MAX_FILE_BYTES, messageSummary } from "@/lib/attachments";
 import { cn, formatDateTime, formatDay, sameDay } from "@/lib/format";
+import { prepareImage } from "@/lib/image";
+import { revealMedia } from "@/lib/media";
 import { EVERYONE, hasMention, pingsUser } from "@/lib/mentions";
 import { isTouchDevice } from "@/lib/mobile";
 import { can, canViewChannel, isMuted, msUntil, outranks } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { foldForSearch, matchesSearch } from "@/lib/search";
 import { getSocket } from "@/lib/socket";
+import type { VoiceNote } from "@/lib/recorder";
+import { uploadFile } from "@/lib/upload";
 import type {
   ChannelDTO,
   LiveMessageDTO,
@@ -28,6 +33,7 @@ import { Modal } from "./Dialogs";
 import ForwardDialog from "./ForwardDialog";
 import MessageItem, { type MessageActions } from "./MessageItem";
 import { StickerPicker } from "./Stickers";
+import { RecordingBar, useCanRecordVoice, VoiceRecordButton, type RecordingState } from "./VoiceNote";
 
 const GROUP_WINDOW_MS = 5 * 60_000;
 /** How often we tell others we're typing, and how long their indicator lasts without a new signal. */
@@ -64,6 +70,21 @@ function withPin(pins: MessageDTO[], m: MessageDTO) {
 
 const REPLY_PREVIEW_LENGTH = 120;
 const MENU_SIZE = 6;
+
+/** A file picked in the composer. It uploads right away, so sending only has to name it. */
+interface PendingFile {
+  key: string;
+  name: string;
+  size: number;
+  kind: "image" | "file";
+  /** A local copy of a picture, for its thumbnail here and, once sent, for showing it without downloading it back. */
+  localUrl?: string;
+  progress: number;
+  /** Set once the upload is done. */
+  id?: string;
+  error?: string;
+  abort: AbortController;
+}
 
 /** One row of the "@" menu: a member, or everyone at once. */
 type Candidate = { kind: "user"; user: UserDTO } | { kind: "everyone" };
@@ -110,6 +131,16 @@ export default function ChatView({
   const [error, setError] = useState<string>();
   const [typing, setTyping] = useState<Record<string, { user: UserDTO; until: number }>>({});
   const [replyTo, setReplyTo] = useState<MessageDTO | null>(null);
+  const [pending, setPending] = useState<PendingFile[]>([]);
+  const pendingRef = useRef<PendingFile[]>([]);
+  useEffect(() => {
+    pendingRef.current = pending;
+  }, [pending]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const canRecord = useCanRecordVoice();
+  const [recording, setRecording] = useState<RecordingState | null>(null);
+  const [sendingVoice, setSendingVoice] = useState(false);
   const [stickersOpen, setStickersOpen] = useState(false);
   const closeStickers = useCallback(() => setStickersOpen(false), []);
   const [selected, setSelected] = useState<{ id: string; picking: boolean } | null>(null);
@@ -203,7 +234,7 @@ export default function ChatView({
           if (x.id === m.id) return m;
           // Replies quote the original, so keep their preview in step.
           return x.replyTo?.id === m.id && !x.replyTo.deleted
-            ? { ...x, replyTo: { ...x.replyTo, content: m.content.slice(0, REPLY_PREVIEW_LENGTH) } }
+            ? { ...x, replyTo: { ...x.replyTo, content: messageSummary(m.content, m.attachments).slice(0, REPLY_PREVIEW_LENGTH) } }
             : x;
         }),
       );
@@ -446,9 +477,13 @@ export default function ChatView({
     setMessages((list) => addUnique(list, [message]));
   };
 
+  const uploading = pending.some((f) => !f.id);
+  const canSend = (!!draft.trim() || pending.length > 0) && !uploading;
+
   const send = async () => {
     const content = draft.trim();
-    if (!content) return;
+    const files = pending;
+    if (!canSend) return;
     if (muted) return;
     setError(undefined);
     lastTypingSent.current = 0;
@@ -456,22 +491,129 @@ export default function ChatView({
     // Clear right away so the user can keep typing; put the text back if sending fails.
     setDraft("");
     setReplyTo(null);
+    setPending([]);
     try {
       const res = await api<{ message: MessageDTO }>(`/api/channels/${channel.id}/messages`, {
         body: {
           content,
           replyTo: replying?.id,
           mentions: [...picked.current].filter(([, name]) => hasMention(content, name)).map(([id]) => id),
+          attachments: files.map((f) => f.id),
         },
+      });
+      // The sender's own pictures show at once, from the copy already on this device.
+      res.message.attachments.forEach((a, i) => {
+        const local = files[i]?.localUrl;
+        if (a.kind === "image" && local) revealMedia(a.url, local);
       });
       addSent(res.message);
     } catch (err) {
       setError((err as Error).message);
       setDraft((current) => current || content);
       setReplyTo((current) => current ?? replying);
+      setPending((current) => (current.length ? current : files));
     } finally {
       inputRef.current?.focus();
     }
+  };
+
+  /** Uploads a just-recorded voice note and sends it on its own, as a reply if one was being written. */
+  const sendVoiceNote = async (note: VoiceNote) => {
+    if (muted) return;
+    if (note.blob.size > MAX_FILE_BYTES) return setError("پیام صوتی بیشتر از ۵ مگابایت است");
+    setError(undefined);
+    setSendingVoice(true);
+    const replying = replyTo;
+    setReplyTo(null);
+    try {
+      const fields = { kind: "voice", duration: note.seconds.toFixed(1), waveform: note.waveform.join(",") };
+      const { id } = await uploadFile(channel.id, { blob: note.blob, name: note.name, fields }, () => {});
+      const res = await api<{ message: MessageDTO }>(`/api/channels/${channel.id}/messages`, {
+        body: { attachments: [id], replyTo: replying?.id },
+      });
+      // The sender plays their own note from the recording still in memory.
+      const sent = res.message.attachments[0];
+      if (sent) revealMedia(sent.url, URL.createObjectURL(note.blob));
+      addSent(res.message);
+    } catch (err) {
+      setError((err as Error).message);
+      setReplyTo((current) => current ?? replying);
+    } finally {
+      setSendingVoice(false);
+    }
+  };
+
+  const updatePending = (key: string, change: Partial<PendingFile>) =>
+    setPending((list) => list.map((f) => (f.key === key ? { ...f, ...change } : f)));
+
+  /** Shrinks pictures, checks sizes and starts uploading each file; problems show above the composer. */
+  const addFiles = async (picked: File[]) => {
+    if (muted || !picked.length) return;
+    setError(undefined);
+    const room = MAX_ATTACHMENTS - pendingRef.current.length;
+    if (picked.length > room) setError(`هر پیام حداکثر ${toPersianDigits(MAX_ATTACHMENTS)} پیوست دارد`);
+    for (const file of picked.slice(0, Math.max(0, room))) {
+      const image = (IMAGE_TYPES as readonly string[]).includes(file.type) ? await prepareImage(file) : null;
+      const blob = image?.blob ?? file;
+      const name = image?.name ?? file.name;
+      if (blob.size > MAX_FILE_BYTES) {
+        setError(`«${name}» بیشتر از ۵ مگابایت است`);
+        continue;
+      }
+      const entry: PendingFile = {
+        key: crypto.randomUUID(),
+        name,
+        size: blob.size,
+        kind: image ? "image" : "file",
+        localUrl: image ? URL.createObjectURL(blob) : undefined,
+        progress: 0,
+        abort: new AbortController(),
+      };
+      setPending((list) => [...list, entry]);
+      const fields = { width: image?.width, height: image?.height, preview: image?.preview };
+      uploadFile(channel.id, { blob, name, fields }, (progress) => updatePending(entry.key, { progress }), entry.abort.signal)
+        .then(({ id }) => updatePending(entry.key, { id, progress: 1 }))
+        .catch((err: Error) => err.name !== "AbortError" && updatePending(entry.key, { error: err.message }));
+    }
+  };
+
+  const removePending = (f: PendingFile) => {
+    f.abort.abort();
+    if (f.localUrl) URL.revokeObjectURL(f.localUrl);
+    setPending((list) => list.filter((x) => x.key !== f.key));
+    // Already on the server: take it back now rather than leaving it for the sweeper.
+    if (f.id) void api(`/api/channels/${channel.id}/files/${f.id}`, { method: "DELETE" }).catch(() => {});
+  };
+
+  // Leaving the channel stops unfinished uploads; finished ones are swept from the server after a day.
+  useEffect(
+    () => () => {
+      for (const f of pendingRef.current) {
+        f.abort.abort();
+        if (f.localUrl) URL.revokeObjectURL(f.localUrl);
+      }
+    },
+    [],
+  );
+
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...e.clipboardData.files];
+    if (!files.length) return;
+    e.preventDefault();
+    void addFiles(files);
+  };
+
+  const canAttach = !muted;
+  const onDragOver = (e: DragEvent) => {
+    if (!canAttach || !e.dataTransfer.types.includes("Files")) return;
+    e.preventDefault();
+    setDragging(true);
+  };
+  const onDrop = (e: DragEvent) => {
+    if (!canAttach || !e.dataTransfer.files.length) return;
+    e.preventDefault();
+    setDragging(false);
+    void addFiles([...e.dataTransfer.files]);
   };
 
   const sendSticker = async (sticker: string) => {
@@ -607,11 +749,24 @@ export default function ChatView({
 
   const nameOf = (userId: string) => (userId === me.id ? "شما" : (memberById.get(userId)?.user.name ?? "عضو سابق"));
 
-  const shown = q ? messages.filter((m) => matchesSearch(m.content, q)) : messages;
+  const shown = q ? messages.filter((m) => matchesSearch(m.content, q) || m.attachments.some((a) => matchesSearch(a.name, q))) : messages;
   const typers = Object.values(typing).map((t) => t.user);
 
   return (
-    <div className="bg-glow flex min-h-0 flex-1 flex-col">
+    <div
+      className="bg-glow relative flex min-h-0 flex-1 flex-col"
+      onDragOver={onDragOver}
+      onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setDragging(false)}
+      onDrop={onDrop}
+    >
+      {dragging && (
+        <div className="pointer-events-none absolute inset-3 z-30 grid place-items-center rounded-3xl border-2 border-dashed border-accent/60 bg-ink-950/80 text-sm font-semibold text-accent">
+          <span className="flex items-center gap-2">
+            <Paperclip className="size-5" />
+            رها کنید تا پیوست شود
+          </span>
+        </div>
+      )}
       {!q && pins.length > 0 && (
         <PinList
           pins={pins}
@@ -741,7 +896,7 @@ export default function ChatView({
                 <span className="min-w-0 flex-1 truncate">
                   پاسخ به <span className="font-semibold">{replyTo.author.id === me.id ? "خودتان" : replyTo.author.name}</span>
                   <span dir="auto" className="ms-2 text-muted">
-                    {replyTo.content}
+                    {messageSummary(replyTo.content, replyTo.attachments)}
                   </span>
                 </span>
                 <button onClick={() => setReplyTo(null)} aria-label="لغو پاسخ" className="-me-2 grid size-8 place-items-center rounded-full text-muted hover:bg-ink-700 hover:text-fg">
@@ -751,6 +906,7 @@ export default function ChatView({
             )}
             <div className="relative">
             {stickersOpen && <StickerPicker onPick={sendSticker} onClose={closeStickers} />}
+            {pending.length > 0 && <PendingFiles files={pending} onRemove={removePending} />}
             {candidates.length > 0 && (
               <ul
                 role="listbox"
@@ -789,7 +945,8 @@ export default function ChatView({
                 ))}
               </ul>
             )}
-            <div className="flex items-end gap-1 rounded-[1.75rem] bg-ink-800 py-1.5 ps-5 pe-1.5 transition focus-within:ring-2 focus-within:ring-accent/60">
+            <div className="relative flex items-end gap-1 rounded-[1.75rem] bg-ink-800 py-1.5 ps-5 pe-1.5 transition focus-within:ring-2 focus-within:ring-accent/60">
+              {recording && <RecordingBar state={recording} />}
               <textarea
                 ref={inputRef}
                 dir="auto"
@@ -799,9 +956,28 @@ export default function ChatView({
                 onChange={(e) => onDraftChange(e.target.value, e.target.selectionStart)}
                 onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
                 onKeyDown={onKeyDown}
+                onPaste={onPaste}
                 placeholder={dm ? `پیام به ${dm.name}` : `پیام به #${channel.name}`}
                 className="bidi-lines field-sizing-content max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base md:text-sm leading-7 outline-none placeholder:text-muted"
               />
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  void addFiles([...(e.target.files ?? [])]);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                aria-label="پیوست تصویر یا فایل"
+                title="پیوست (حداکثر ۵ مگابایت)"
+                className="grid size-10 shrink-0 place-items-center rounded-full text-muted transition hover:bg-ink-700 hover:text-fg active:scale-95"
+              >
+                <Paperclip className="size-5" />
+              </button>
               <button
                 data-sticker-toggle
                 onClick={() => setStickersOpen((o) => !o)}
@@ -815,14 +991,19 @@ export default function ChatView({
               >
                 <StickerIcon className="size-5" />
               </button>
-              <button
-                onClick={send}
-                disabled={!draft.trim()}
-                aria-label="ارسال"
-                className="grid size-10 shrink-0 place-items-center rounded-full bg-accent-strong text-on-accent transition hover:brightness-105 active:scale-95 disabled:bg-transparent disabled:text-muted disabled:shadow-none"
-              >
-                <SendHorizontal className="size-5 -scale-x-100" />
-              </button>
+              {/* With nothing typed or attached, the send button becomes the hold-to-record button, as in other messengers. */}
+              {canRecord && !draft.trim() && !pending.length ? (
+                <VoiceRecordButton sending={sendingVoice} onRecording={setRecording} onRecorded={sendVoiceNote} onError={setError} />
+              ) : (
+                <button
+                  onClick={send}
+                  disabled={!canSend}
+                  aria-label="ارسال"
+                  className="grid size-10 shrink-0 place-items-center rounded-full bg-accent-strong text-on-accent transition hover:brightness-105 active:scale-95 disabled:bg-transparent disabled:text-muted disabled:shadow-none"
+                >
+                  <SendHorizontal className="size-5 -scale-x-100" />
+                </button>
+              )}
             </div>
             </div>
             </>
@@ -847,7 +1028,7 @@ export default function ChatView({
         <Modal title="حذف پیام" onClose={() => setDeleting(null)}>
           <p className="mb-3 text-sm text-muted">این پیام برای همه حذف می‌شود و برگشتی ندارد.</p>
           <p dir="auto" className="bidi-lines mb-5 line-clamp-4 whitespace-pre-wrap rounded-xl bg-ink-800 px-4 py-3 text-sm leading-7 break-words">
-            {deleting.content}
+            {messageSummary(deleting.content, deleting.attachments)}
           </p>
           <div className="grid grid-cols-2 gap-2">
             <button onClick={confirmDelete} className="rounded-xl bg-danger-strong px-4 py-2.5 font-semibold text-white hover:bg-danger-strong/90">
@@ -901,7 +1082,7 @@ function PinList({
         <span className="shrink-0 font-semibold">{toPersianDigits(pins.length)} پیام سنجاق‌شده</span>
         {!open && (
           <span dir="auto" className="min-w-0 flex-1 truncate text-muted">
-            {pins[0].content}
+            {messageSummary(pins[0].content, pins[0].attachments)}
           </span>
         )}
         <ChevronDown className={cn("ms-auto size-4 shrink-0 text-muted transition", open && "rotate-180")} />
@@ -916,7 +1097,7 @@ function PinList({
                   {formatDateTime(p.createdAt)}
                 </span>
                 <span dir="auto" className="mt-0.5 line-clamp-2 block text-sm leading-6 break-words">
-                  {p.content}
+                  {messageSummary(p.content, p.attachments)}
                 </span>
               </button>
             </li>
@@ -966,5 +1147,54 @@ function MessagesSkeleton() {
         </div>
       ))}
     </div>
+  );
+}
+
+/** Files picked for the next message, each with its upload progress and a button to take it back out. */
+function PendingFiles({ files, onRemove }: { files: PendingFile[]; onRemove: (f: PendingFile) => void }) {
+  return (
+    <ul aria-label="پیوست‌ها" className="scrollbar-thin mb-1.5 flex gap-2 overflow-x-auto pb-1">
+      {files.map((f) => (
+        <li
+          key={f.key}
+          title={f.error ?? f.name}
+          className={cn(
+            "relative flex h-16 shrink-0 items-center overflow-hidden rounded-2xl bg-ink-800 ring-1",
+            f.error ? "ring-danger/70" : "ring-line",
+            f.kind === "image" ? "w-16" : "w-52 gap-2 ps-2 pe-8",
+          )}
+        >
+          {f.kind === "image" && f.localUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={f.localUrl} alt={f.name} className="size-full object-cover" />
+          ) : (
+            <>
+              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent/15 text-accent">
+                <FileText className="size-5" />
+              </span>
+              <span className="min-w-0 flex-1 text-xs">
+                <span dir="auto" className="block truncate font-semibold">
+                  {f.name}
+                </span>
+                <span className={cn("block", f.error ? "text-danger" : "text-muted")}>{f.error ? "ناموفق" : formatBytes(f.size)}</span>
+              </span>
+            </>
+          )}
+          {!f.id && !f.error && (
+            <span aria-hidden className="absolute inset-x-0 bottom-0 h-1 bg-ink-950/60">
+              <span className="block h-full bg-accent transition-[width]" style={{ width: `${Math.round(f.progress * 100)}%` }} />
+            </span>
+          )}
+          {f.error && f.kind === "image" && <span className="absolute inset-0 bg-danger-strong/40" />}
+          <button
+            onClick={() => onRemove(f)}
+            aria-label={`حذف ${f.name}`}
+            className="absolute top-1 end-1 grid size-6 place-items-center rounded-full bg-ink-950/75 text-fg hover:bg-ink-950"
+          >
+            <X className="size-3.5" />
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

@@ -16,24 +16,81 @@
   --lime: var(--color-accent);
   --lime-strong: var(--color-accent-strong);
   --danger: var(--color-danger-strong);
+  --online: var(--color-online);
 
   color-scheme: dark;
   background: var(--canvas);
   color: var(--fg);
-  /* The tilted hero cards reach past the edges; clip them without breaking position: sticky. */
+  /* The hero glow and floating cards reach past the edges; clip them without breaking position: sticky. */
   overflow-x: clip;
 }
 
-/* ---- Hero card stack ----------------------------------------------------------------------- */
+/* ---- Hero ------------------------------------------------------------------------------- */
 
-.landing-card-lime {
-  transform: rotate(-6deg) translateY(-1.5rem);
+/*
+ * The lit wave behind the mockup: a bright lime crest rising from the end side toward the top edge of the
+ * mockup, a wider haze under it, and a dark lobe (::after) carving the upper start side so it reads as a wave.
+ */
+.landing-glow {
+  position: absolute;
+  inset: -18rem -25% -6rem;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(34% 12% at 60% 32%, rgb(250 255 225 / 0.95), transparent 70%),
+    radial-gradient(56% 22% at 50% 35%, rgb(222 244 140 / 0.7), transparent 72%),
+    radial-gradient(90% 34% at 30% 44%, rgb(222 244 140 / 0.3), transparent 72%),
+    radial-gradient(28% 34% at 96% 30%, rgb(230 247 163 / 0.2), transparent 70%);
+  filter: blur(40px);
+  animation: landing-glow 14s ease-in-out infinite alternate;
 }
-.landing-card-mid {
-  transform: rotate(-3deg) translateY(-0.75rem);
+.landing-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(38% 20% at 28% 14%, var(--canvas) 50%, transparent 100%);
 }
-.landing-card-front {
-  transform: rotate(1.5deg);
+@keyframes landing-glow {
+  to {
+    transform: translateY(-1.5rem) scaleX(1.05);
+    opacity: 0.85;
+  }
+}
+
+.landing-mockup {
+  box-shadow:
+    0 40px 120px -30px rgb(230 247 163 / 0.35),
+    0 30px 60px -20px rgb(0 0 0 / 0.9);
+}
+
+.landing-float-card {
+  animation: landing-float 7s ease-in-out infinite;
+}
+
+/* Feature names under the mockup fade out at both ends, like a logo row. */
+.landing-strip {
+  mask-image: linear-gradient(to left, transparent, #000 18%, #000 82%, transparent);
+}
+
+/* ---- Bento ------------------------------------------------------------------------------- */
+
+.landing-scene {
+  background: radial-gradient(80% 70% at 50% 0%, rgb(255 255 255 / 0.04), transparent 70%);
+}
+
+/* A short lit dash running along each connector toward the hub. */
+.landing-beam {
+  stroke-dasharray: 14 86;
+  animation: landing-beam 2.4s linear infinite;
+  animation-delay: var(--d, 0s);
+}
+@keyframes landing-beam {
+  from {
+    stroke-dashoffset: 100;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
 }
 
 .landing-sphere {
@@ -118,38 +175,18 @@
 
 @media (prefers-reduced-motion: no-preference) {
   @supports (animation-timeline: view()) {
-    /* The back cards fan out and the front card straightens as the hero scrolls away. */
-    .landing-stack {
-      view-timeline-name: --stack;
-    }
-    .landing-card-lime,
-    .landing-card-mid,
-    .landing-card-front {
-      animation: linear both;
-      animation-timeline: --stack;
-      animation-range: exit -20% exit 80%;
-    }
-    .landing-card-lime {
-      animation-name: landing-fan-lime;
-    }
-    .landing-card-mid {
-      animation-name: landing-fan-mid;
-    }
-    .landing-card-front {
-      animation-name: landing-fan-front;
-    }
-
     .landing-reveal {
       animation: landing-reveal linear both;
       animation-timeline: view();
       animation-range: entry 0% entry 70%;
     }
 
-    /* Each word darkens in turn as the statement crosses the middle of the screen. */
+    /* Each word lights up in turn as the statement crosses the middle of the screen. */
     .landing-statement {
       view-timeline-name: --statement;
     }
     .landing-word {
+      color: var(--lime);
       animation: landing-word linear both;
       animation-timeline: --statement;
       animation-range: cover calc(18% + var(--i) * 0.9%) cover calc(22% + var(--i) * 0.9%);
@@ -157,30 +194,30 @@
   }
 }
 
-@keyframes landing-fan-lime {
-  to {
-    transform: rotate(-11deg) translate(4%, -3rem);
-  }
-}
-@keyframes landing-fan-mid {
-  to {
-    transform: rotate(-6deg) translate(2%, -1.75rem);
-  }
-}
-@keyframes landing-fan-front {
-  to {
-    transform: rotate(0deg) scale(1.03);
-  }
-}
 @keyframes landing-reveal {
   from {
     opacity: 0;
     transform: translateY(40px);
   }
 }
+/* Unread words sit in dark grey; read ones settle on lime, like a highlighter passing over the quote. */
 @keyframes landing-word {
   from {
     color: var(--color-ink-600);
+  }
+  to {
+    color: var(--lime);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-glow,
+  .landing-float,
+  .landing-float-slow,
+  .landing-float-card,
+  .landing-beam,
+  .landing-marquee {
+    animation: none;
   }
 }
 

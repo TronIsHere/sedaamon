@@ -51,6 +51,8 @@ export async function forwardMessage(
     author: user._id,
     content: original.content,
     sticker: original.sticker ?? null,
+    // The copy points at the same stored files; they are removed once neither message is left.
+    attachments: original.attachments ?? [],
     forwardedFrom,
   });
   const message = await serializeMessage(doc.toObject());

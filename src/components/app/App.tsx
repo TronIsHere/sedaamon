@@ -3,9 +3,19 @@
 import "@livekit/components-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoomAudioRenderer, RoomContext, useAudioPlayback } from "@livekit/components-react";
-import { DisconnectReason, LocalAudioTrack, Room, RoomEvent, Track, type RemoteTrackPublication } from "livekit-client";
+import {
+  DisconnectReason,
+  LocalAudioTrack,
+  Room,
+  RoomEvent,
+  Track,
+  VideoQuality,
+  type RemoteParticipant,
+  type RemoteTrackPublication,
+} from "livekit-client";
 import { Bell, Compass, Hash, Lock, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/lib/api";
+import { messageSummary } from "@/lib/attachments";
 import { cn } from "@/lib/format";
 import { can, isMuted, ROLE_LABEL } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
@@ -14,7 +24,15 @@ import { pingsUser } from "@/lib/mentions";
 import { showNotification } from "@/lib/notifications";
 import { statusLine } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
-import { acquireMic, micErrorMessage, voiceUnsupportedReason } from "@/lib/voice";
+import { useToast } from "@/components/ui/toast";
+import {
+  acquireMic,
+  micErrorMessage,
+  readLowDataPref,
+  videoKey,
+  voiceUnsupportedReason,
+  writeLowDataPref,
+} from "@/lib/voice";
 import {
   DM_SCOPE,
   type ChannelDTO,
@@ -42,8 +60,9 @@ import { CreateChannelDialog, EditChannelDialog, ProfileDialog, ServerDialog } f
 import EventsDialog, { formatEventWhen } from "./EventsDialog";
 import FriendsDialog from "./FriendsDialog";
 import MembersList from "./MembersList";
-import NotificationsDialog, { PING_TEXT } from "./NotificationsDialog";
+import NotificationsDialog, { PING_ICON, PING_TEXT } from "./NotificationsDialog";
 import ProfileCard from "./ProfileCard";
+import ProfileMenu from "./ProfileMenu";
 import ServerRail, { Badge } from "./ServerRail";
 import ServerSettingsDialog from "./ServerSettingsDialog";
 import VoiceBar from "./VoiceBar";
@@ -63,6 +82,24 @@ export interface VoiceSettings {
   lowData: boolean;
   setDeafened: (v: boolean) => void;
   setLowData: (v: boolean) => void;
+  /** In low-data mode, the cameras and screens (by `videoKey`) the person chose to receive anyway. */
+  allowedVideo: ReadonlySet<string>;
+  setVideoAllowed: (key: string, allowed: boolean) => void;
+}
+
+/**
+ * Low-data mode receives only voices. A camera or screen (with its sound) comes through only after the person asks
+ * for that one, and then capped at a lower quality: low for faces, medium for screens so text stays readable.
+ */
+function applyLowData(pub: RemoteTrackPublication, identity: string, lowData: boolean, allowed: ReadonlySet<string>) {
+  const voice = pub.kind === Track.Kind.Audio && pub.source !== Track.Source.ScreenShareAudio;
+  const wanted = voice || !lowData || allowed.has(videoKey(identity, pub.source));
+  pub.setSubscribed(wanted);
+  if (wanted && pub.kind === Track.Kind.Video) {
+    pub.setVideoQuality(
+      !lowData ? VideoQuality.HIGH : pub.source === Track.Source.ScreenShare ? VideoQuality.MEDIUM : VideoQuality.LOW,
+    );
+  }
 }
 
 type Dialog =
@@ -101,17 +138,15 @@ export default function App({
   const [joiningId, setJoiningId] = useState<string | null>(null);
   const [deafened, setDeafened] = useState(false);
   const [lowData, setLowData] = useState(false);
+  const [allowedVideo, setAllowedVideo] = useState<ReadonlySet<string>>(new Set());
   const [dialog, setDialog] = useState<Dialog>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [infoHidden, setInfoHidden] = useState(false);
   const [search, setSearch] = useState<string | null>(null);
   const [unread, setUnread] = useState<Unread>({});
-  const [toast, setToast] = useState<string | null>(null);
   /** Pings (mentions, @everyone, replies) newest first; null until the first load. */
   const [notifications, setNotifications] = useState<NotificationDTO[] | null>(null);
-  /** The ping shown as a banner for a few seconds. */
-  const [pingToast, setPingToast] = useState<NotificationDTO | null>(null);
   /** userId → connected right now. Fed by server details, the friend list and live "presence" events. */
   const [online, setOnline] = useState<Record<string, boolean>>({});
   const [friends, setFriends] = useState<FriendsDTO | null>(null);
@@ -121,6 +156,7 @@ export default function App({
   /** Servers whose welcome screen was already put in front of the person in this visit. */
   const welcomeShown = useRef(new Set<string>());
   const lowDataRef = useRef(lowData);
+  const allowedVideoRef = useRef(allowedVideo);
   const activeChannelRef = useRef(activeChannelId);
   const serversRef = useRef(servers);
   const activeServerRef = useRef(activeServerId);
@@ -128,6 +164,9 @@ export default function App({
   const connectionRef = useRef(connection);
   const dmsRef = useRef(dms);
   const notificationsRef = useRef(notifications);
+  /** Latest openers for toast taps; the socket handlers outlive the render that made them. */
+  const openFromToast = useRef<{ ping: (n: NotificationDTO) => void; dm: (userId: string) => void } | null>(null);
+  const { toast, dismiss: dismissToast } = useToast();
 
   const [room] = useState(
     () =>
@@ -156,9 +195,8 @@ export default function App({
   const sidebarSwipe = useSwipe((toward) => toward === "start" && setSidebarOpen(false));
 
   const notify = useCallback((message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast((t) => (t === message ? null : t)), 5000);
-  }, []);
+    toast({ id: `notice:${message}`, title: message });
+  }, [toast]);
 
   const refreshNotifications = useCallback(
     () =>
@@ -392,7 +430,29 @@ export default function App({
           : serverName
             ? `${m.author.name} در ${serverName}`
             : m.author.name;
-        showNotification(title, m.content, m.channelId);
+        showNotification(title, messageSummary(m.content, m.attachments), m.channelId);
+        // Pings get their own toast below; a direct message is the other thing worth interrupting for.
+        if (m.serverId === DM_SCOPE)
+          toast({
+            id: `dm:${m.channelId}`,
+            group: true,
+            refs: [`msg:${m.id}`, `ch:${m.channelId}`],
+            icon: <Avatar user={m.author} />,
+            badge: <MessageCircle className="size-2.5" />,
+            title: (count) =>
+              count > 1 ? (
+                <>
+                  <span className="font-semibold">{toPersianDigits(String(count))} پیام</span> از {m.author.name}
+                </>
+              ) : (
+                <>
+                  <span className="font-semibold">{m.author.name}</span> برایتان پیام فرستاد
+                </>
+              ),
+            description: messageSummary(m.content, m.attachments),
+            onClick: () => openFromToast.current?.dm(m.author.id),
+            duration: 6000,
+          });
       }
     };
 
@@ -400,12 +460,33 @@ export default function App({
     const onPing = (n: NotificationDTO) => {
       setNotifications((list) => (list?.some((x) => x.id === n.id) ? list : [n, ...(list ?? [])]));
       if (n.channelId === activeChannelRef.current && document.visibilityState === "visible") return;
-      setPingToast(n);
-      window.setTimeout(() => setPingToast((t) => (t?.id === n.id ? null : t)), 6000);
+      // Several pings from one person in one channel share a card: "3 messages from …".
+      const KindIcon = PING_ICON[n.kind];
+      toast({
+        id: `ping:${n.author.id}:${n.channelId}`,
+        group: true,
+        refs: [`msg:${n.messageId}`, `ch:${n.channelId}`],
+        icon: <Avatar user={n.author} />,
+        badge: <KindIcon className="size-2.5" />,
+        title: (count) =>
+          count > 1 ? (
+            <>
+              <span className="font-semibold">{toPersianDigits(String(count))} پیام</span> از {n.author.name}
+            </>
+          ) : (
+            <>
+              <span className="font-semibold">{n.author.name}</span> {PING_TEXT[n.kind]}
+            </>
+          ),
+        description: n.preview,
+        meta: `#${n.channelName} · ${n.serverName}`,
+        onClick: () => openFromToast.current?.ping(n),
+        duration: 6000,
+      });
     };
     const onMessageDelete = ({ messageId }: { messageId: string }) => {
       setNotifications((list) => list && list.filter((n) => n.messageId !== messageId));
-      setPingToast((t) => (t?.messageId === messageId ? null : t));
+      dismissToast(`msg:${messageId}`);
     };
     if (socket.connected) connectedOnce = true;
     socket.on("connect", onConnect);
@@ -452,7 +533,7 @@ export default function App({
       socket.off("user:update", onUserUpdate);
       socket.off("friends:changed", refreshFriends);
     };
-  }, [initialMe.id, notify, refreshFriends, refreshDms, refreshNotifications, dropCall]);
+  }, [initialMe.id, notify, toast, dismissToast, refreshFriends, refreshDms, refreshNotifications, dropCall]);
 
   // The channel on screen is read; so is the active one again when the tab comes back to the front.
   useEffect(() => {
@@ -467,6 +548,7 @@ export default function App({
       const id = activeChannelRef.current;
       if (id && document.visibilityState === "visible") {
         markChannelPingsRead(id);
+        dismissToast(`ch:${id}`);
         setUnread((u) => {
           if (!u[id]) return u;
           const rest = { ...u };
@@ -478,7 +560,7 @@ export default function App({
     markRead();
     document.addEventListener("visibilitychange", markRead);
     return () => document.removeEventListener("visibilitychange", markRead);
-  }, [activeChannelId, servers, activeServerId, detail, connection, dms, notifications, markChannelPingsRead]);
+  }, [activeChannelId, servers, activeServerId, detail, connection, dms, notifications, markChannelPingsRead, dismissToast]);
 
   // Unread pings come from the saved list, so they survive a reload; the live counts only know what arrived since.
   const unreadView: Unread = { ...unread };
@@ -500,27 +582,51 @@ export default function App({
       setConnection(null);
       notify("اتصال صوتی قطع شد");
     };
-    const onSubscribed = (_track: unknown, pub: RemoteTrackPublication) => {
-      if (lowDataRef.current && pub.kind === Track.Kind.Video) pub.setSubscribed(false);
-    };
+    // Catch new feeds as soon as they're announced, before much video has been spent on them.
+    const onPublished = (pub: RemoteTrackPublication, participant: RemoteParticipant) =>
+      applyLowData(pub, participant.identity, lowDataRef.current, allowedVideoRef.current);
+    const onSubscribed = (_track: unknown, pub: RemoteTrackPublication, participant: RemoteParticipant) =>
+      onPublished(pub, participant);
     room.on(RoomEvent.Disconnected, onDisconnected);
+    room.on(RoomEvent.TrackPublished, onPublished);
     room.on(RoomEvent.TrackSubscribed, onSubscribed);
     return () => {
       room.off(RoomEvent.Disconnected, onDisconnected);
+      room.off(RoomEvent.TrackPublished, onPublished);
       room.off(RoomEvent.TrackSubscribed, onSubscribed);
       room.disconnect();
     };
   }, [room, notify]);
 
-  // Low-data mode: stop receiving video, keep audio.
+  // Low-data mode is a per-device choice; read it after hydration so server and client markup match.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLowData(readLowDataPref());
+  }, []);
+
+  // Low-data mode: keep voices, drop video and screen sound except the feeds the person asked for.
   useEffect(() => {
     lowDataRef.current = lowData;
+    allowedVideoRef.current = allowedVideo;
     for (const p of room.remoteParticipants.values()) {
-      for (const pub of p.trackPublications.values()) {
-        if (pub.kind === Track.Kind.Video) pub.setSubscribed(!lowData);
-      }
+      for (const pub of p.trackPublications.values()) applyLowData(pub, p.identity, lowData, allowedVideo);
     }
-  }, [lowData, room, connection]);
+  }, [lowData, allowedVideo, room, connection]);
+
+  const changeLowData = useCallback((on: boolean) => {
+    writeLowDataPref(on);
+    setLowData(on);
+    // Turning it back on starts from nothing let through again.
+    setAllowedVideo(new Set());
+  }, []);
+  const setVideoAllowed = useCallback((key: string, allowed: boolean) => {
+    setAllowedVideo((prev) => {
+      const next = new Set(prev);
+      if (allowed) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
 
   // Safari blocks sound until the page is tapped; when that happens this offers a button to turn it on.
   const { canPlayAudio, startAudio } = useAudioPlayback(room);
@@ -542,6 +648,7 @@ export default function App({
       });
       if (room.state !== "disconnected") await room.disconnect();
       await room.connect(url, token);
+      setAllowedVideo(new Set());
       setConnection({
         channelId: channel.id,
         serverId: channel.serverId,
@@ -593,7 +700,7 @@ export default function App({
   /** Opens the channel a ping came from. */
   const openNotification = (n: NotificationDTO) => {
     setDialog(null);
-    setPingToast(null);
+    dismissToast(`ch:${n.channelId}`);
     setSidebarOpen(false);
     lastChannelByServer.current[n.serverId] = n.channelId;
     if (n.serverId === activeServerId) {
@@ -646,6 +753,10 @@ export default function App({
     }
   };
 
+  useEffect(() => {
+    openFromToast.current = { ping: openNotification, dm: openDm };
+  });
+
   const selectChannel = (channel: ChannelDTO) => {
     if (channel.id !== activeChannelId) setSearch(null);
     setActiveChannelId(channel.id);
@@ -682,7 +793,7 @@ export default function App({
         { user: activeDm.peer, role: "member", mutedUntil: null, joinedAt: "", badges: [] },
       ]
     : [];
-  const settings: VoiceSettings = { deafened, lowData, setDeafened, setLowData };
+  const settings: VoiceSettings = { deafened, lowData, setDeafened, setLowData: changeLowData, allowedVideo, setVideoAllowed };
   const inVoice = currentDetail?.channels.reduce((n, c) => n + (voiceStates[c.id]?.length ?? 0), 0) ?? 0;
 
   const firstVoice = currentDetail?.channels.find((c) => c.type === "voice");
@@ -753,6 +864,7 @@ export default function App({
               onEvents={() => setDialog({ kind: "events" })}
               onLeaveVoice={leaveVoice}
               onProfile={() => setDialog({ kind: "profile" })}
+              onMeChange={setMe}
               onNotify={notify}
             />
           </aside>
@@ -851,14 +963,24 @@ export default function App({
                       <PanelLeft className="size-5 ltr:-scale-x-100" />
                     </HeaderButton>
                   )}
-                <button
-                  onClick={() => setDialog({ kind: "profile" })}
-                  title="حساب کاربری"
-                  aria-label="حساب کاربری"
-                  className="hidden shrink-0 rounded-full transition-opacity hover:opacity-85 md:block"
+                <ProfileMenu
+                  me={me}
+                  align="end"
+                  onMeChange={setMe}
+                  onSettings={() => setDialog({ kind: "profile" })}
+                  onNotify={notify}
                 >
-                  <Avatar user={me} online />
-                </button>
+                  {(trigger) => (
+                    <button
+                      {...trigger}
+                      title="وضعیت و پروفایل"
+                      aria-label="وضعیت و پروفایل"
+                      className="hidden shrink-0 rounded-full transition-opacity hover:opacity-85 md:block"
+                    >
+                      <Avatar user={me} online />
+                    </button>
+                  )}
+                </ProfileMenu>
               </div>
             </header>
 
@@ -1054,34 +1176,6 @@ export default function App({
               setDialog(null);
             }}
           />
-        )}
-
-        {pingToast && (
-          <button
-            onClick={() => openNotification(pingToast)}
-            className={cn(
-              "fixed left-1/2 z-50 flex w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 items-center gap-3 rounded-2xl bg-ink-800/95 px-3 py-2.5 text-start shadow-2xl ring-1 ring-accent/40 backdrop-blur",
-              toast ? "top-[calc(env(safe-area-inset-top)+8rem)]" : "top-[calc(env(safe-area-inset-top)+4.5rem)]",
-            )}
-          >
-            <Avatar user={pingToast.author} />
-            <span className="min-w-0 flex-1 leading-5">
-              <span className="block truncate text-sm">
-                <span className="font-semibold">{pingToast.author.name}</span> {PING_TEXT[pingToast.kind]}
-              </span>
-              <span dir="auto" className="block truncate text-xs text-muted">
-                {pingToast.preview}
-              </span>
-              <span className="block truncate text-xs text-muted/80">
-                #{pingToast.channelName} · {pingToast.serverName}
-              </span>
-            </span>
-          </button>
-        )}
-        {toast && (
-          <div className="surface-float animate-drop-in fixed top-[calc(env(safe-area-inset-top)+4.5rem)] left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl px-4 py-2.5 text-center text-sm leading-6" role="status">
-            {toast}
-          </div>
         )}
       </WatchProvider>
     </RoomContext.Provider>
