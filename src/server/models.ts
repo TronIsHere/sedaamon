@@ -63,7 +63,8 @@ const memberSchema = new Schema(
   {
     server: { type: ObjectId, ref: "Server", required: true },
     user: { type: ObjectId, ref: "User", required: true, index: true },
-    role: { type: String, enum: ["owner", "admin", "moderator", "organizer", "channel_manager", "member"], default: "member" },
+    owner: { type: Boolean, default: false },
+    roles: { type: [{ type: ObjectId, ref: "Role" }], default: [] },
     mutedUntil: { type: Date, default: null },
     // How the person got in; "discovery" earns the explorer badge.
     joinedVia: { type: String, enum: ["owner", "invite", "discovery"], default: "invite" },
@@ -77,13 +78,36 @@ const memberSchema = new Schema(
 );
 memberSchema.index({ server: 1, user: 1 }, { unique: true });
 
+// A role a server made. Higher positions outrank lower ones; members can hold several and get all their permissions.
+const roleSchema = new Schema(
+  {
+    server: { type: ObjectId, ref: "Server", required: true, index: true },
+    name: { type: String, required: true },
+    color: { type: String, required: true },
+    permissions: { type: [String], default: [] },
+    position: { type: Number, required: true },
+  },
+  { timestamps: true },
+);
+
+// A collapsible group of channels in the sidebar.
+const categorySchema = new Schema(
+  {
+    server: { type: ObjectId, ref: "Server", required: true, index: true },
+    name: { type: String, required: true },
+    position: { type: Number, default: 0 },
+  },
+  { timestamps: true },
+);
+
 const channelSchema = new Schema(
   {
     server: { type: ObjectId, ref: "Server", required: true, index: true },
     name: { type: String, required: true },
     type: { type: String, enum: ["text", "voice"], required: true },
     position: { type: Number, default: 0 },
-    // A private channel is hidden from everyone but those who see every private channel, these roles and these people.
+    category: { type: ObjectId, ref: "Category", default: null },
+    // A private channel is hidden from everyone but those who see every private channel, these roles (by id) and these people.
     isPrivate: { type: Boolean, default: false },
     allowedRoles: { type: [String], default: [] },
     allowedMembers: { type: [{ type: ObjectId, ref: "User" }], default: [] },
@@ -195,6 +219,8 @@ export const Session = getModel("Session", sessionSchema);
 export const Otp = getModel("Otp", otpSchema);
 export const Server = getModel("Server", serverSchema);
 export const Member = getModel("Member", memberSchema);
+export const ServerRole = getModel("Role", roleSchema);
+export const Category = getModel("Category", categorySchema);
 export const Channel = getModel("Channel", channelSchema);
 export const Message = getModel("Message", messageSchema);
 export const Friendship = getModel("Friendship", friendshipSchema);

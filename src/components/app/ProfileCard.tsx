@@ -4,16 +4,16 @@ import { useCallback, useEffect, useState } from "react";
 import { Clock, Loader2, MessageCircle, Server, UserCheck, UserMinus, UserPlus, UserX, Volume2, VolumeX } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn, formatDate, formatLastSeen } from "@/lib/format";
-import { ASSIGNABLE_ROLES, can, canModerate, isMuted, ROLE_HINT, ROLE_LABEL } from "@/lib/permissions";
+import { can, canManageRole, canModerate, isMuted, outranks, standingOf, type Standing } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { statusLabel } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
-import type { FriendState, MemberDTO, ProfileDTO, Role } from "@/lib/types";
+import type { FriendState, MemberDTO, ProfileDTO, RoleDTO } from "@/lib/types";
 import Select from "@/components/ui/select";
 import Avatar from "./Avatar";
 import { BadgeShelf } from "./Badges";
 import { Modal } from "./Dialogs";
-import { RolePill } from "./RoleBadge";
+import { RolePills } from "./RoleBadge";
 
 const MUTE_OPTIONS = [
   { minutes: 10, label: "۱۰ دقیقه" },
@@ -29,7 +29,8 @@ const buttonClass =
 export default function ProfileCard({
   userId,
   serverId,
-  myRole,
+  myStanding,
+  roles,
   member,
   online,
   onClose,
@@ -40,7 +41,9 @@ export default function ProfileCard({
   userId: string;
   /** The server this was opened from, when it was opened from a member list or a message. */
   serverId?: string;
-  myRole?: Role;
+  myStanding?: Standing;
+  /** The server's roles, strongest first. */
+  roles: RoleDTO[];
   /** This person's membership in that server. */
   member?: MemberDTO;
   online: boolean;
@@ -94,8 +97,14 @@ export default function ProfileCard({
     });
 
   const memberPath = `/api/servers/${serverId}/members/${userId}`;
-  const showRoleControl = !!(member && myRole && can(myRole, "role:assign") && member.role !== "owner");
-  const showModeration = !!(member && myRole && canModerate(myRole, member.role));
+  const theirs = member && standingOf(member, roles);
+  const showRoleControl = !!(theirs && myStanding && can(myStanding, "role:manage") && outranks(myStanding, theirs) && roles.length);
+  const showModeration = !!(theirs && myStanding && canModerate(myStanding, theirs));
+  const toggleRole = (role: RoleDTO) => {
+    if (!member) return;
+    const next = member.roles.includes(role.id) ? member.roles.filter((r) => r !== role.id) : [...member.roles, role.id];
+    run(() => api(memberPath, { method: "PATCH", body: { roles: next } }));
+  };
   const muted = isMuted(member?.mutedUntil);
 
   return (
@@ -114,9 +123,9 @@ export default function ProfileCard({
             <Avatar user={profile} size="lg" online={online} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-lg font-bold">{profile.name}</p>
-              {member && member.role !== "member" && (
-                <div className="mt-1">
-                  <RolePill role={member.role} />
+              {member && (member.owner || member.roles.length > 0) && (
+                <div className="mt-1.5">
+                  <RolePills member={member} roles={roles} />
                 </div>
               )}
               {(profile.status || profile.statusText) && online && (
@@ -255,23 +264,33 @@ export default function ProfileCard({
             <section className="space-y-2 border-t border-line pt-4">
               <h3 className="text-xs font-semibold text-muted">مدیریت عضو</h3>
 
-              {showRoleControl && member && (
-                <label className="block space-y-1.5">
-                  <span className="text-sm text-muted">نقش در سرور</span>
-                  <Select
-                    disabled={busy}
-                    value={member.role}
-                    onChange={(e) => run(() => api(memberPath, { method: "PATCH", body: { role: e.target.value } }))}
-                    className="text-sm"
-                  >
-                    {ASSIGNABLE_ROLES.map((r) => (
-                      <option key={r} value={r}>
-                        {ROLE_LABEL[r]}
-                      </option>
-                    ))}
-                  </Select>
-                  <span className="block text-xs leading-5 text-muted">{ROLE_HINT[member.role]}</span>
-                </label>
+              {showRoleControl && member && myStanding && (
+                <fieldset className="space-y-1.5">
+                  <legend className="text-sm text-muted">نقش‌ها</legend>
+                  <div className="flex flex-wrap gap-2">
+                    {roles.map((r) => {
+                      const held = member.roles.includes(r.id);
+                      return (
+                        <button
+                          key={r.id}
+                          type="button"
+                          aria-pressed={held}
+                          disabled={busy || !canManageRole(myStanding, r)}
+                          onClick={() => toggleRole(r)}
+                          title={canManageRole(myStanding, r) ? undefined : "این نقش هم‌تراز یا بالاتر از نقش شماست"}
+                          className={cn(
+                            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                            held ? "border-transparent font-semibold" : "border-line text-muted hover:bg-ink-800",
+                          )}
+                          style={held ? { color: r.color, backgroundColor: `${r.color}26` } : undefined}
+                        >
+                          <span className="size-2 rounded-full" style={{ backgroundColor: r.color }} />
+                          {r.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </fieldset>
               )}
 
               {showModeration && (

@@ -2,13 +2,14 @@ import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { isValidObjectId, type Types } from "mongoose";
 import { z } from "zod";
-import { can, type Permission } from "@/lib/permissions";
-import { DM_SCOPE, type Role } from "@/lib/types";
+import { can, NO_STANDING, type Permission, type Standing } from "@/lib/permissions";
+import { DM_SCOPE } from "@/lib/types";
 import { connectDB } from "./db";
 import { HttpError } from "./errors";
 import { channelAudience, memberCanView } from "./access";
-import { Channel, Conversation, Member } from "./models";
+import { Channel, Conversation } from "./models";
 import { emitToAudience, emitToUsers } from "./realtime";
+import { findMemberWithStanding } from "./roles";
 import { SESSION_COOKIE, userFromToken } from "./session";
 
 export { HttpError };
@@ -49,7 +50,7 @@ export function assertId(id: string) {
 
 export async function requireMember(serverId: string, userId: Types.ObjectId) {
   assertId(serverId);
-  const member = await Member.findOne({ server: serverId, user: userId }).lean();
+  const member = await findMemberWithStanding(serverId, userId);
   if (!member) throw new HttpError(403, "عضو این سرور نیستید");
   return member;
 }
@@ -72,7 +73,7 @@ export interface MessageScope {
   /** Who may see this channel's messages and pings: ids for a private channel, null when the whole server (or conversation) can. */
   audience: ReadonlySet<string> | null;
   /** Only server channels have a Member row; in a conversation everyone is an equal "member". */
-  member: { role: Role; mutedUntil?: Date | null; rulesPending?: boolean };
+  member: { standing: Standing; mutedUntil?: Date | null; rulesPending?: boolean };
   isDm: boolean;
   /** Sends an event to everyone who can see these messages. */
   emit: (event: string, payload: unknown) => void;
@@ -91,7 +92,7 @@ export async function requireMessageScope(channelId: string, userId: Types.Objec
     return {
       serverId,
       type: channel.type,
-      member: { role: member.role as Role, mutedUntil: member.mutedUntil, rulesPending: !!member.rulesPending },
+      member: { standing: member.standing, mutedUntil: member.mutedUntil, rulesPending: !!member.rulesPending },
       isDm: false,
       audience: audience && new Set(audience),
       emit: (event, payload) => emitToAudience(serverId, audience, event, payload),
@@ -105,7 +106,7 @@ export async function requireMessageScope(channelId: string, userId: Types.Objec
   return {
     serverId: DM_SCOPE,
     type: "dm",
-    member: { role: "member", mutedUntil: null },
+    member: { standing: NO_STANDING, mutedUntil: null },
     isDm: true,
     audience: null,
     emit: (event, payload) => emitToUsers(people, event, payload),
@@ -119,6 +120,6 @@ export function assertCanWrite(member: { mutedUntil?: Date | null; rulesPending?
   if (member.rulesPending) throw new HttpError(403, "برای شرکت در گفت‌وگو، ابتدا قوانین سرور را بپذیرید");
 }
 
-export function assertPermission(member: { role: string }, permission: Permission, message = "اجازهٔ این کار را ندارید") {
-  if (!can(member.role as Role, permission)) throw new HttpError(403, message);
+export function assertPermission(member: { standing: Standing }, permission: Permission, message = "اجازهٔ این کار را ندارید") {
+  if (!can(member.standing, permission)) throw new HttpError(403, message);
 }

@@ -1,10 +1,10 @@
 import { z } from "zod";
 import { outranks } from "@/lib/permissions";
-import type { Role } from "@/lib/types";
 import { assertCanWrite, assertId, assertPermission, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
 import { serializeMessage } from "@/server/messages";
-import { Member, Message, Notification } from "@/server/models";
+import { Message, Notification } from "@/server/models";
 import { keepMentions } from "@/server/notifications";
+import { findMemberWithStanding } from "@/server/roles";
 
 type Ctx = RouteContext<"/api/channels/[id]/messages/[messageId]">;
 
@@ -52,9 +52,9 @@ export const DELETE = handle(async (_req, ctx: Ctx) => {
 
   if (String(existing.author) !== String(user._id)) {
     assertPermission(scope.member, "message:delete_any");
-    const authorMember = await Member.findOne({ server: scope.serverId, user: existing.author }).lean();
+    const authorMember = await findMemberWithStanding(scope.serverId, existing.author);
     // Someone who has left the server ranks below everyone.
-    if (authorMember && !outranks(scope.member.role, authorMember.role as Role)) {
+    if (authorMember && !outranks(scope.member.standing, authorMember.standing)) {
       throw new HttpError(403, "نمی‌توانید پیام همرده یا بالاتر از خودتان را حذف کنید");
     }
   }

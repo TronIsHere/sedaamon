@@ -6,7 +6,7 @@ import { api } from "@/lib/api";
 import { cn, formatDateTime, formatDay, sameDay } from "@/lib/format";
 import { EVERYONE, hasMention, pingsUser } from "@/lib/mentions";
 import { isTouchDevice } from "@/lib/mobile";
-import { can, canViewChannel, isMuted, msUntil, outranks } from "@/lib/permissions";
+import { can, canViewChannel, isMuted, msUntil, NO_STANDING, outranks, standingOf } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { foldForSearch, matchesSearch } from "@/lib/search";
 import { getSocket } from "@/lib/socket";
@@ -18,7 +18,7 @@ import type {
   MessageDeletedEvent,
   MessageDTO,
   ReactionsEvent,
-  Role,
+  RoleDTO,
   TypingEvent,
   UserDTO,
 } from "@/lib/types";
@@ -73,6 +73,7 @@ export default function ChatView({
   channel,
   search,
   members,
+  roles,
   online,
   dm,
   rulesPending,
@@ -86,6 +87,8 @@ export default function ChatView({
   dm?: UserDTO;
   search: string;
   members: MemberDTO[];
+  /** The server's roles, strongest first; empty in a direct conversation. */
+  roles: RoleDTO[];
   online: Record<string, boolean>;
   /** The server's rules haven't been accepted yet, so writing is closed. */
   rulesPending: boolean;
@@ -141,7 +144,7 @@ export default function ChatView({
   const q = foldForSearch(search);
   const memberById = useMemo(() => new Map(members.map((m) => [m.user.id, m])), [members]);
   const myMember = memberById.get(me.id);
-  const myRole: Role = myMember?.role ?? "member";
+  const myStanding = useMemo(() => (myMember ? standingOf(myMember, roles) : NO_STANDING), [myMember, roles]);
   const muted = isMuted(myMember?.mutedUntil) || rulesPending;
 
   // "@" followed by letters right before the cursor opens the member menu (not in direct messages, where there is nobody to ping).
@@ -151,14 +154,14 @@ export default function ChatView({
     if (!word || wordStart === menuClosedAt) return [];
     const q = foldForSearch(word[2]);
     const people = members
-      .filter((m) => m.user.id !== me.id && canViewChannel(channel, m.role, m.user.id) && matchesSearch(m.user.name, q))
+      .filter((m) => m.user.id !== me.id && canViewChannel(channel, standingOf(m, roles), m.user.id) && matchesSearch(m.user.name, q))
       .sort((a, b) => Number(foldForSearch(b.user.name).startsWith(q)) - Number(foldForSearch(a.user.name).startsWith(q)))
       .map((m): Candidate => ({ kind: "user", user: m.user }));
-    const everyone: Candidate[] = can(myRole, "message:mention_everyone") && EVERYONE.startsWith(q) ? [{ kind: "everyone" }] : [];
+    const everyone: Candidate[] = can(myStanding, "message:mention_everyone") && EVERYONE.startsWith(q) ? [{ kind: "everyone" }] : [];
     return [...everyone, ...people].slice(0, MENU_SIZE);
     // `word` is derived from draft and caret.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft, caret, members, channel, me.id, myRole, menuClosedAt]);
+  }, [draft, caret, members, roles, channel, me.id, myStanding, menuClosedAt]);
   const activeCandidate = Math.min(menuIndex, candidates.length - 1);
 
   // The composer unlocks by itself when the mute runs out.
@@ -665,7 +668,7 @@ export default function ChatView({
               prev.author.id === m.author.id &&
               new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_WINDOW_MS;
             const mine = m.author.id === me.id;
-            const authorRole = memberById.get(m.author.id)?.role;
+            const author = memberById.get(m.author.id);
             return (
               <div key={m.id} data-mid={m.id}>
                 {newDay && (
@@ -682,12 +685,13 @@ export default function ChatView({
                   myId={me.id}
                   pinged={pingsUser(m, me.id)}
                   highlight={q}
-                  authorRole={authorRole}
-                  authorBadges={memberById.get(m.author.id)?.badges}
+                  author={author}
+                  roles={roles}
+                  authorBadges={author?.badges}
                   authorOnline={memberById.has(m.author.id) ? !!online[m.author.id] : undefined}
                   canWrite={!muted}
-                  canDelete={mine || (can(myRole, "message:delete_any") && outranks(myRole, authorRole ?? "member"))}
-                  canPin={can(myRole, "message:pin")}
+                  canDelete={mine || (can(myStanding, "message:delete_any") && outranks(myStanding, author ? standingOf(author, roles) : NO_STANDING))}
+                  canPin={can(myStanding, "message:pin")}
                   selected={selected?.id === m.id}
                   picking={selected?.id === m.id && selected.picking}
                   flash={flashId === m.id}

@@ -1,6 +1,7 @@
 import type { Types } from "mongoose";
 import { NEWCOMER_MS } from "@/lib/badges";
-import type { BadgeId, ChannelDTO, MeDTO, MemberDTO, Role, ServerDTO, Status, UserDTO } from "@/lib/types";
+import type { Standing } from "@/lib/permissions";
+import type { BadgeId, CategoryDTO, ChannelDTO, MeDTO, MemberDTO, ServerDTO, Status, UserDTO } from "@/lib/types";
 
 interface UserDoc {
   _id: Types.ObjectId;
@@ -27,7 +28,8 @@ export const toUser = (u: UserDoc): UserDTO => {
 export const toMe = (u: UserDoc & { phone: string }): MeDTO => ({ ...toUser(u), phone: u.phone, bio: u.bio ?? "" });
 
 interface MemberDoc {
-  role: string;
+  owner?: boolean | null;
+  roles?: Types.ObjectId[] | null;
   mutedUntil?: Date | null;
   createdAt?: Date;
   joinedVia?: string | null;
@@ -37,7 +39,7 @@ interface MemberDoc {
 /** What a member has earned. Founders and staff already stand out by role, so only plain members are "new". */
 export function badgesOf(m: MemberDoc): BadgeId[] {
   const badges: BadgeId[] = [];
-  if (m.role === "member" && m.createdAt && Date.now() - m.createdAt.getTime() < NEWCOMER_MS) badges.push("newcomer");
+  if (!m.owner && !m.roles?.length && m.createdAt && Date.now() - m.createdAt.getTime() < NEWCOMER_MS) badges.push("newcomer");
   if (m.rulesAcceptedAt) badges.push("rule_keeper");
   if (m.joinedVia === "discovery") badges.push("explorer");
   return badges;
@@ -45,7 +47,8 @@ export function badgesOf(m: MemberDoc): BadgeId[] {
 
 export const toMember = (m: MemberDoc, user: UserDoc): MemberDTO => ({
   user: toUser(user),
-  role: m.role as Role,
+  owner: !!m.owner,
+  roles: (m.roles ?? []).map(String),
   mutedUntil: m.mutedUntil && m.mutedUntil.getTime() > Date.now() ? m.mutedUntil.toISOString() : null,
   joinedAt: (m.createdAt ?? new Date()).toISOString(),
   badges: badgesOf(m),
@@ -53,8 +56,15 @@ export const toMember = (m: MemberDoc, user: UserDoc): MemberDTO => ({
 
 export const toServer = (
   s: { _id: Types.ObjectId; name: string; inviteCode: string },
-  role: Role,
-): ServerDTO => ({ id: String(s._id), name: s.name, inviteCode: s.inviteCode, role });
+  standing: Standing,
+): ServerDTO => ({ id: String(s._id), name: s.name, inviteCode: s.inviteCode, standing });
+
+export const toCategory = (c: { _id: Types.ObjectId; server: Types.ObjectId; name: string; position: number }): CategoryDTO => ({
+  id: String(c._id),
+  serverId: String(c.server),
+  name: c.name,
+  position: c.position,
+});
 
 export const toChannel = (c: {
   _id: Types.ObjectId;
@@ -62,6 +72,7 @@ export const toChannel = (c: {
   name: string;
   type: "text" | "voice";
   position: number;
+  category?: Types.ObjectId | null;
   isPrivate?: boolean | null;
   allowedRoles?: string[] | null;
   allowedMembers?: Types.ObjectId[] | null;
@@ -71,8 +82,9 @@ export const toChannel = (c: {
   name: c.name,
   type: c.type,
   position: c.position,
+  categoryId: c.category ? String(c.category) : null,
   isPrivate: !!c.isPrivate,
   // Channels made before private ones existed have neither list.
-  allowedRoles: c.isPrivate ? ((c.allowedRoles ?? []) as Role[]) : [],
+  allowedRoles: c.isPrivate ? (c.allowedRoles ?? []) : [],
   allowedMembers: c.isPrivate ? (c.allowedMembers ?? []).map(String) : [],
 });

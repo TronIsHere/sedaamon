@@ -6,18 +6,20 @@ import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { can } from "@/lib/permissions";
-import type { ChannelDTO, DiscoverySettingsDTO, MemberDTO, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
+import type { ChannelDTO, DiscoverySettingsDTO, MemberDTO, RoleDTO, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
 import Avatar from "./Avatar";
 import { inputClass, Modal, SubmitButton, useSubmit } from "./Dialogs";
+import RolesSettings from "./RolesSettings";
 import { DiscoverySettings, WelcomeSettings } from "./ServerOnboardingSettings";
 
 const dangerButton = "rounded-xl bg-danger-strong px-4 py-2.5 text-sm font-semibold text-white hover:bg-danger-strong/90 disabled:opacity-60";
 const quietButton = "rounded-xl bg-ink-800 px-4 py-2.5 text-sm text-muted hover:text-fg";
 
 const TABS = [
-  { id: "general", label: "عمومی" },
-  { id: "discovery", label: "کاوش" },
-  { id: "welcome", label: "خوش‌آمدگویی" },
+  { id: "general", label: "عمومی", permission: "server:manage" },
+  { id: "roles", label: "نقش‌ها", permission: "role:manage" },
+  { id: "discovery", label: "کاوش", permission: "server:manage" },
+  { id: "welcome", label: "خوش‌آمدگویی", permission: "server:manage" },
 ] as const;
 
 /**
@@ -27,6 +29,7 @@ const TABS = [
 export default function ServerSettingsDialog({
   server,
   members,
+  roles,
   channels,
   discovery,
   welcome,
@@ -37,6 +40,7 @@ export default function ServerSettingsDialog({
 }: {
   server: ServerDTO;
   members: MemberDTO[];
+  roles: RoleDTO[];
   channels: ChannelDTO[];
   discovery: DiscoverySettingsDTO;
   welcome: WelcomeDTO;
@@ -46,12 +50,14 @@ export default function ServerSettingsDialog({
   onChanged: (detail: ServerDetailDTO) => void;
   onNotify: (message: string) => void;
 }) {
-  const isOwner = can(server.role, "server:own");
+  const isOwner = can(server.standing, "server:own");
+  // Each tab needs its own permission: someone who only manages roles sees just the roles.
+  const tabs = TABS.filter((t) => can(server.standing, t.permission));
   const [name, setName] = useState(server.name);
   const [renewing, setRenewing] = useState(false);
   const [confirmRenew, setConfirmRenew] = useState(false);
   const [panel, setPanel] = useState<"transfer" | "delete" | null>(null);
-  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("general");
+  const [tab, setTab] = useState<(typeof TABS)[number]["id"]>(tabs[0]?.id ?? "general");
 
   const rename = useSubmit(
     () => api<ServerDetailDTO>(`/api/servers/${server.id}`, { method: "PATCH", body: { name } }),
@@ -79,15 +85,16 @@ export default function ServerSettingsDialog({
 
   return (
     <Modal title="تنظیمات سرور" onClose={onClose}>
-      <div role="tablist" className="mb-4 grid grid-cols-3 gap-1 rounded-full bg-ink-850 p-1 text-sm">
-        {TABS.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={cn("rounded-full py-2 sm:py-1.5", tab === t.id ? "bg-accent-strong text-on-accent" : "text-muted hover:text-fg")}>
+      <div role="tablist" className="mb-4 flex gap-1 rounded-full bg-ink-850 p-1 text-sm">
+        {tabs.map((t) => (
+          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={cn("flex-1 rounded-full py-2 sm:py-1.5", tab === t.id ? "bg-accent-strong text-on-accent" : "text-muted hover:text-fg")}>
             {t.label}
           </button>
         ))}
       </div>
 
       {tab === "discovery" && <DiscoverySettings server={server} value={discovery} onChanged={onChanged} onNotify={onNotify} />}
+      {tab === "roles" && <RolesSettings server={server} roles={roles} members={members} onNotify={onNotify} />}
       {tab === "welcome" && <WelcomeSettings server={server} value={welcome} channels={channels} onChanged={onChanged} onNotify={onNotify} />}
 
       {tab === "general" && (

@@ -2,25 +2,28 @@ import crypto from "node:crypto";
 import type { Types } from "mongoose";
 import { CATEGORY_IDS, cleanTags, MAX_DESCRIPTION, MIN_DESCRIPTION } from "@/lib/discovery";
 import { foldForSearch, matchesSearch } from "@/lib/search";
-import type { DiscoverDTO, DiscoverySettingsDTO, MemberDTO, Role, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
+import { NO_STANDING } from "@/lib/permissions";
+import type { DiscoverDTO, DiscoverySettingsDTO, MemberDTO, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
 import { memberCanView } from "./access";
 import { listEvents } from "./events";
 import { announceJoin } from "./presence";
 import { HttpError, requireMember } from "./http";
 import { closeVoiceRooms } from "./livekit";
-import { Channel, Event, Member, Message, Server, User } from "./models";
+import { Category, Channel, Event, Member, Message, Server, ServerRole, User } from "./models";
 import { clearVoiceChannel, emitToServer, onlineAmong, realtime, serverRoom, subscribeUserToServer, voiceSnapshot } from "./realtime";
-import { toChannel, toMember, toServer } from "./serialize";
+import { createDefaultRoles, memberStanding, rolesByServer, serverRoles } from "./roles";
+import { toCategory, toChannel, toMember, toServer } from "./serialize";
 
 const newInviteCode = () => crypto.randomBytes(6).toString("base64url");
 
 export async function listServers(userId: Types.ObjectId): Promise<ServerDTO[]> {
   const memberships = await Member.find({ user: userId }).sort({ createdAt: 1 }).lean();
-  const servers = await Server.find({ _id: { $in: memberships.map((m) => m.server) } }).lean();
+  const serverIds = memberships.map((m) => m.server);
+  const [servers, roles] = await Promise.all([Server.find({ _id: { $in: serverIds } }).lean(), rolesByServer(serverIds)]);
   const byId = new Map(servers.map((s) => [String(s._id), s]));
   return memberships.flatMap((m) => {
     const s = byId.get(String(m.server));
-    return s ? [toServer(s, m.role as Role)] : [];
+    return s ? [toServer(s, memberStanding(m, roles.get(String(s._id)) ?? []))] : [];
   });
 }
 
@@ -29,10 +32,12 @@ export async function getServerDetail(serverId: string, userId: Types.ObjectId):
   const server = await Server.findById(serverId).lean();
   if (!server) throw new HttpError(404, "سرور پیدا نشد");
 
-  const [allChannels, members, events] = await Promise.all([
+  const [allChannels, members, events, roles, categories] = await Promise.all([
     Channel.find({ server: serverId }).sort({ position: 1, createdAt: 1 }).lean(),
     Member.find({ server: serverId }).lean(),
     listEvents(serverId),
+    serverRoles(serverId),
+    Category.find({ server: serverId }).sort({ position: 1, createdAt: 1 }).lean(),
   ]);
   const channels = allChannels.filter((c) => memberCanView(c, member));
   const channelIds = new Set(channels.map((c) => String(c._id)));
@@ -40,7 +45,9 @@ export async function getServerDetail(serverId: string, userId: Types.ObjectId):
   const usersById = new Map(users.map((u) => [String(u._id), u]));
 
   return {
-    server: toServer(server, member.role as Role),
+    server: toServer(server, member.standing),
+    roles,
+    categories: categories.map(toCategory),
     channels: channels.map(toChannel),
     members: members.flatMap((m): MemberDTO[] => {
       const u = usersById.get(String(m.user));
@@ -76,13 +83,14 @@ const toWelcome = (s: Pick<ServerDoc, "welcome">, visibleChannels?: Set<string>)
 
 export async function createServer(name: string, ownerId: Types.ObjectId) {
   const server = await Server.create({ name, owner: ownerId, inviteCode: newInviteCode() });
-  await Member.create({ server: server._id, user: ownerId, role: "owner", joinedVia: "owner" });
+  const member = await Member.create({ server: server._id, user: ownerId, owner: true, joinedVia: "owner" });
+  await createDefaultRoles(server._id);
   await Channel.create([
     { server: server._id, name: "عمومی", type: "text", position: 0 },
     { server: server._id, name: "اتاق صوتی", type: "voice", position: 1 },
   ]);
   subscribeUserToServer(String(ownerId), String(server._id));
-  return toServer(server, "owner");
+  return toServer(server, memberStanding(member, []));
 }
 
 export async function findServerByInvite(code: string) {
@@ -96,7 +104,7 @@ async function admit(server: ServerDoc, user: JoiningUser, via: "invite" | "disc
   const existing = await Member.findOne({ server: server._id, user: user._id }).lean();
   if (existing) {
     subscribeUserToServer(String(user._id), String(server._id));
-    return toServer(server, existing.role as Role);
+    return toServer(server, memberStanding(existing, await serverRoles(server._id)));
   }
 
   const welcome = server.welcome;
@@ -104,7 +112,6 @@ async function admit(server: ServerDoc, user: JoiningUser, via: "invite" | "disc
   const member = await Member.create({
     server: server._id,
     user: user._id,
-    role: "member",
     joinedVia: via,
     welcomePending: welcomeOn,
     rulesPending: welcomeOn && !!welcome?.requireRules && !!welcome.rules.length,
@@ -117,7 +124,7 @@ async function admit(server: ServerDoc, user: JoiningUser, via: "invite" | "disc
   emitToServer(String(server._id), "member:new", { serverId: String(server._id), member: toMember(member.toObject(), user) });
   subscribeUserToServer(String(user._id), String(server._id));
   announceJoin(String(server._id), String(user._id));
-  return toServer(server, "member");
+  return toServer(server, NO_STANDING);
 }
 
 export async function joinServer(code: string, user: JoiningUser) {
@@ -264,20 +271,25 @@ export async function renewInvite(serverId: string) {
   return server;
 }
 
-/** The owner becomes an admin and the chosen member takes over. */
+/** The chosen member takes over, and the old owner keeps their roles plus the strongest role there is. */
 export async function transferOwnership(serverId: string, currentOwner: Types.ObjectId, newOwnerId: string) {
   const target = await Member.findOne({ server: serverId, user: newOwnerId });
   if (!target) throw new HttpError(404, "این کاربر عضو سرور نیست");
   if (String(target.user) === String(currentOwner)) throw new HttpError(400, "شما همین الان مالک سرور هستید");
 
-  // The server's own record is the source of truth; roles follow it.
+  // The server's own record is the source of truth; the members' owner flags follow it.
   const claimed = await Server.updateOne({ _id: serverId, owner: currentOwner }, { owner: target.user });
   if (!claimed.modifiedCount) throw new HttpError(409, "مالکیت سرور تغییر کرده است. صفحه را تازه کنید");
 
-  target.role = "owner";
+  target.owner = true;
   target.mutedUntil = null;
   await target.save();
-  const previous = await Member.findOneAndUpdate({ server: serverId, user: currentOwner }, { role: "admin" }, { new: true });
+  const top = await ServerRole.findOne({ server: serverId }).sort({ position: -1 }).lean();
+  const previous = await Member.findOneAndUpdate(
+    { server: serverId, user: currentOwner },
+    { owner: false, ...(top && { $addToSet: { roles: top._id } }) },
+    { new: true },
+  );
 
   const users = await User.find({ _id: { $in: [target.user, currentOwner] } }).lean();
   const byId = new Map(users.map((u) => [String(u._id), u]));
@@ -307,6 +319,8 @@ export async function deleteServer(serverId: string) {
     Channel.deleteMany({ server: serverId }),
     Member.deleteMany({ server: serverId }),
     Event.deleteMany({ server: serverId }),
+    ServerRole.deleteMany({ server: serverId }),
+    Category.deleteMany({ server: serverId }),
   ]);
   await Server.deleteOne({ _id: serverId });
 }

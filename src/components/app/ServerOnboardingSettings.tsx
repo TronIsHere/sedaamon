@@ -19,11 +19,31 @@ interface Props<T> {
   onNotify: (message: string) => void;
 }
 
-function ToggleRow({ checked, onChange, icon, title, hint }: { checked: boolean; onChange: (v: boolean) => void; icon: React.ReactNode; title: string; hint: string }) {
+export function ToggleRow({
+  checked,
+  onChange,
+  icon,
+  title,
+  hint,
+  disabled,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  icon?: React.ReactNode;
+  title: string;
+  hint: string;
+  disabled?: boolean;
+}) {
   return (
-    <label className={cn("flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5", checked ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800")}>
-      <input type="checkbox" className="sr-only" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span className="text-muted">{icon}</span>
+    <label
+      className={cn(
+        "flex items-center gap-3 rounded-xl border px-3 py-2.5",
+        checked ? "border-accent bg-accent-strong/10" : "border-line",
+        disabled ? "cursor-not-allowed opacity-50" : cn("cursor-pointer", !checked && "hover:bg-ink-800"),
+      )}
+    >
+      <input type="checkbox" className="sr-only" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+      {icon && <span className="text-muted">{icon}</span>}
       <div className="min-w-0 flex-1">
         <p className="font-semibold">{title}</p>
         <p className="text-xs text-muted">{hint}</p>

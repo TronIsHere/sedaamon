@@ -8,7 +8,8 @@ import { isTouchDevice } from "@/lib/mobile";
 import { REACTION_EMOJIS } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { foldForSearch } from "@/lib/search";
-import type { BadgeId, MessageDTO, Role } from "@/lib/types";
+import { topRole } from "@/lib/permissions";
+import type { BadgeId, MemberDTO, MessageDTO, RoleDTO } from "@/lib/types";
 import Avatar from "./Avatar";
 import { BadgeIcon } from "./Badges";
 import { RoleIcon } from "./RoleBadge";
@@ -35,7 +36,8 @@ export default function MessageItem({
   myId,
   pinged,
   highlight,
-  authorRole,
+  author,
+  roles,
   authorBadges,
   authorOnline,
   canWrite,
@@ -54,7 +56,9 @@ export default function MessageItem({
   /** The message names me, reaches everyone, or replies to me. */
   pinged: boolean;
   highlight: string;
-  authorRole: Role | undefined;
+  /** The author's membership of this server; absent once they've left, and in direct messages. */
+  author: MemberDTO | undefined;
+  roles: readonly RoleDTO[];
   /** What the author has earned in this server; only the "new member" badge is shown by the name. */
   authorBadges: readonly BadgeId[] | undefined;
   authorOnline: boolean | undefined;
@@ -125,9 +129,13 @@ export default function MessageItem({
       <div className="relative flex min-w-0 flex-1 flex-col items-start">
         {!grouped && (
           <div className="flex w-full items-center gap-2">
-            <button onClick={() => actions.onOpenProfile(m.author.id)} className="flex items-center gap-1.5 text-sm font-semibold hover:underline">
+            <button
+              onClick={() => actions.onOpenProfile(m.author.id)}
+              style={{ color: author && topRole(author, roles)?.color }}
+              className="flex items-center gap-1.5 text-sm font-semibold hover:underline"
+            >
               {mine ? "شما" : m.author.name}
-              {authorRole && <RoleIcon role={authorRole} />}
+              {author && <RoleIcon member={author} roles={roles} />}
               {authorBadges?.includes("newcomer") && <BadgeIcon id="newcomer" size={18} />}
             </button>
             {m.pinnedAt && <PinMark />}

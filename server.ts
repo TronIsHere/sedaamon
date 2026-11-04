@@ -15,6 +15,7 @@ async function main() {
   const { connectDB } = await import("./src/server/db");
   const { Channel, Conversation, Member } = await import("./src/server/models");
   const { channelAudience, memberCanView } = await import("./src/server/access");
+  const { findMemberWithStanding, migrateLegacyRoles } = await import("./src/server/roles");
   const { toUser } = await import("./src/server/serialize");
   const { DM_SCOPE } = await import("./src/lib/types");
   const { isValidObjectId } = await import("mongoose");
@@ -25,6 +26,7 @@ async function main() {
   const { startEventScheduler } = await import("./src/server/events");
 
   await connectDB();
+  await migrateLegacyRoles();
 
   const httpServer = createServer();
   const app = next({ dev, hostname, port, httpServer });
@@ -78,7 +80,7 @@ async function main() {
       const channel = await Channel.findOne({ _id: channelId, server: serverId }, { server: 1, isPrivate: 1, allowedRoles: 1, allowedMembers: 1 }).lean().catch(() => null);
       if (!channel) return;
       if (!channel.isPrivate) return void socket.to(serverRoom(serverId)).emit("typing", { channelId, user: socket.data.user });
-      const me = await Member.findOne({ server: serverId, user: userId }, { user: 1, role: 1 }).lean().catch(() => null);
+      const me = await findMemberWithStanding(serverId, userId).catch(() => null);
       if (!me || !memberCanView(channel, me)) return;
       const audience = ((await channelAudience(channel).catch(() => null)) ?? []).filter((id) => id !== userId);
       emitToUsers(audience, "typing", { channelId, user: socket.data.user });

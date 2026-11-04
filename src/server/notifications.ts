@@ -1,5 +1,5 @@
 import type { Types } from "mongoose";
-import type { NotificationDTO, NotificationKind, Role } from "@/lib/types";
+import type { NotificationDTO, NotificationKind } from "@/lib/types";
 import { EVERYONE, findMentions, hasMention } from "@/lib/mentions";
 import { can } from "@/lib/permissions";
 import type { MessageScope } from "./http";
@@ -18,7 +18,7 @@ const MAX_MENTIONS = 20;
  */
 export async function resolveMentions(scope: MessageScope, authorId: Types.ObjectId, text: string, ids: string[]) {
   if (scope.isDm) return { mentions: [] as Types.ObjectId[], everyone: false };
-  const everyone = can(scope.member.role as Role, "message:mention_everyone") && hasMention(text, EVERYONE);
+  const everyone = can(scope.member.standing, "message:mention_everyone") && hasMention(text, EVERYONE);
 
   // Someone who can't see a private channel can't be pinged in it.
   const wanted = [...new Set(ids)].filter((id) => id !== String(authorId) && (!scope.audience || scope.audience.has(id))).slice(0, MAX_MENTIONS);

@@ -1,30 +1,37 @@
-import { CalendarCheck, Crown, Gavel, Hash, Shield, type LucideIcon } from "lucide-react";
+import { Crown, Shield } from "lucide-react";
 import { cn } from "@/lib/format";
-import { ROLE_LABEL } from "@/lib/permissions";
-import type { Role } from "@/lib/types";
+import { OWNER_LABEL, topRole } from "@/lib/permissions";
+import type { MemberDTO, RoleDTO } from "@/lib/types";
 
-/** Icon, icon colour, and pill colours of every role that stands out from plain members. */
-const LOOK: Record<Exclude<Role, "member">, { Icon: LucideIcon; icon: string; pill: string }> = {
-  owner: { Icon: Crown, icon: "text-amber-400", pill: "bg-amber-400/15 text-amber-300" },
-  admin: { Icon: Shield, icon: "text-sky-400", pill: "bg-sky-400/15 text-sky-300" },
-  moderator: { Icon: Gavel, icon: "text-violet-400", pill: "bg-violet-400/15 text-violet-300" },
-  organizer: { Icon: CalendarCheck, icon: "text-emerald-400", pill: "bg-emerald-400/15 text-emerald-300" },
-  channel_manager: { Icon: Hash, icon: "text-rose-400", pill: "bg-rose-400/15 text-rose-300" },
-};
+const OWNER_COLOR = "#fbbf24";
 
-/** A small icon next to a name for everyone with a role. Plain members get nothing. */
-export function RoleIcon({ role, className }: { role: Role; className?: string }) {
-  if (role === "member") return null;
-  const { Icon, icon } = LOOK[role];
-  return <Icon aria-label={ROLE_LABEL[role]} className={cn("size-3.5 shrink-0", icon, className)} />;
+/** A small icon next to a name: a crown for the owner, a shield in the colour of their highest role for everyone with one. Plain members get nothing. */
+export function RoleIcon({ member, roles, className }: { member: Pick<MemberDTO, "owner" | "roles">; roles: readonly RoleDTO[]; className?: string }) {
+  if (member.owner) return <Crown aria-label={OWNER_LABEL} style={{ color: OWNER_COLOR }} className={cn("size-3.5 shrink-0", className)} />;
+  const top = topRole(member, roles);
+  if (!top) return null;
+  return <Shield aria-label={top.name} style={{ color: top.color }} className={cn("size-3.5 shrink-0", className)} />;
 }
 
-export function RolePill({ role }: { role: Role }) {
-  if (role === "member") return null;
+/** One coloured pill per role, or the owner's crown. */
+export function RolePills({ member, roles }: { member: Pick<MemberDTO, "owner" | "roles">; roles: readonly RoleDTO[] }) {
+  const held = roles.filter((r) => member.roles.includes(r.id));
+  if (!member.owner && !held.length) return null;
   return (
-    <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold", LOOK[role].pill)}>
-      <RoleIcon role={role} className="size-3 text-current" />
-      {ROLE_LABEL[role]}
+    <span className="inline-flex flex-wrap gap-1.5">
+      {member.owner && <Pill color={OWNER_COLOR} label={OWNER_LABEL} owner />}
+      {held.map((r) => (
+        <Pill key={r.id} color={r.color} label={r.name} />
+      ))}
+    </span>
+  );
+}
+
+function Pill({ color, label, owner }: { color: string; label: string; owner?: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-semibold" style={{ color, backgroundColor: `${color}26` }}>
+      {owner ? <Crown className="size-3" /> : <span className="size-2 rounded-full" style={{ backgroundColor: color }} />}
+      {label}
     </span>
   );
 }

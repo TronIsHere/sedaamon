@@ -7,7 +7,7 @@ import { DisconnectReason, LocalAudioTrack, Room, RoomEvent, Track, type RemoteT
 import { Bell, Compass, Hash, Lock, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
-import { can, isMuted, ROLE_LABEL } from "@/lib/permissions";
+import { can, isMuted, standingOf } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { useCloseOnBack, useSwipe } from "@/lib/mobile";
 import { pingsUser } from "@/lib/mentions";
@@ -17,6 +17,7 @@ import { getSocket } from "@/lib/socket";
 import { acquireMic, micErrorMessage, voiceUnsupportedReason } from "@/lib/voice";
 import {
   DM_SCOPE,
+  type CategoryDTO,
   type ChannelDTO,
   type DmDTO,
   type DmListDTO,
@@ -38,7 +39,7 @@ import Avatar from "./Avatar";
 import ChannelSidebar from "./ChannelSidebar";
 import ChatView from "./ChatView";
 import DiscoverDialog from "./DiscoverDialog";
-import { CreateChannelDialog, EditChannelDialog, ProfileDialog, ServerDialog } from "./Dialogs";
+import { CategoryDialog, CreateChannelDialog, EditChannelDialog, ProfileDialog, ServerDialog } from "./Dialogs";
 import EventsDialog, { formatEventWhen } from "./EventsDialog";
 import FriendsDialog from "./FriendsDialog";
 import MembersList from "./MembersList";
@@ -75,8 +76,10 @@ type Dialog =
   | { kind: "welcome" }
   | { kind: "notifications" }
   | { kind: "user"; userId: string }
-  | { kind: "channel"; type: ChannelDTO["type"] }
+  | { kind: "channel"; type: ChannelDTO["type"]; categoryId: string | null }
   | { kind: "editChannel"; channelId: string }
+  /** Null makes a new category. */
+  | { kind: "category"; categoryId: string | null }
   | null;
 
 /** channelId → unread messages that arrived while the channel wasn't on screen */
@@ -227,6 +230,8 @@ export default function App({
       .then((d) => {
         if (cancelled) return;
         setDetail(d);
+        // Keeps the list's copy of the server (and what this person may do there) in step with the fresh one.
+        setServers((list) => list.map((s) => (s.id === d.server.id ? d.server : s)));
         markOnline(d.members.map((m) => m.user.id), d.online);
         setVoiceStates((prev) => {
           const next = { ...prev };
@@ -292,17 +297,18 @@ export default function App({
           ? {
               ...d,
               members: d.members.map((m) => (m.user.id === member.user.id ? member : m)),
-              server: mine ? { ...d.server, role: member.role } : d.server,
+              server: mine ? { ...d.server, standing: standingOf(member, d.roles) } : d.server,
             }
           : d,
       );
       if (!mine) return;
-      const previous = serversRef.current.find((s) => s.id === serverId)?.role;
-      setServers((list) => list.map((s) => (s.id === serverId ? { ...s, role: member.role } : s)));
-      if (previous && previous !== member.role) {
-        notify(`نقش شما در این سرور «${ROLE_LABEL[member.role]}» شد`);
-        // A new role can open or close private channels, so the list is fetched again.
-        setReloadKey((k) => k + 1);
+      const previous = serversRef.current.find((s) => s.id === serverId)?.standing;
+      const changed = !!previous && (previous.owner !== member.owner || previous.roles.length !== member.roles.length || previous.roles.some((r) => !member.roles.includes(r)));
+      if (changed) {
+        notify("نقش‌های شما در این سرور تغییر کرد");
+        // New roles can open or close private channels, so the server is fetched again; that also refreshes the list's copy.
+        if (activeServerRef.current === serverId) setReloadKey((k) => k + 1);
+        else setServers((list) => list.map((s) => (s.id === serverId ? { ...s, standing: { ...s.standing, owner: member.owner, roles: member.roles } } : s)));
       }
       else if (isMuted(member.mutedUntil)) notify("شما در این سرور بی‌صدا شده‌اید");
     };
@@ -345,10 +351,27 @@ export default function App({
       // Only people who said they would come get a system notification.
       if (event.interested.includes(initialMe.id)) showNotification(serversRef.current.find((s) => s.id === event.serverId)?.name ?? "صدامون", text, `event:${event.id}:${kind}`);
     };
-    // The welcome screen, its rules or the starter channels changed: fetch the server again.
+    // The welcome screen, its rules or the starter channels changed, or roles did: fetch the server again.
     const onWelcomeChanged = ({ serverId }: { serverId: string }) => {
       if (serverId === activeServerRef.current) setReloadKey((k) => k + 1);
     };
+    const putCategory = (c: CategoryDTO) =>
+      setDetail((d) =>
+        d && d.server.id === c.serverId
+          ? { ...d, categories: [...d.categories.filter((x) => x.id !== c.id), c].sort((a, b) => a.position - b.position) }
+          : d,
+      );
+    // Its channels are kept, above every category.
+    const onCategoryDelete = ({ serverId, categoryId }: { serverId: string; categoryId: string }) =>
+      setDetail((d) =>
+        d && d.server.id === serverId
+          ? {
+              ...d,
+              categories: d.categories.filter((x) => x.id !== categoryId),
+              channels: d.channels.map((c) => (c.categoryId === categoryId ? { ...c, categoryId: null } : c)),
+            }
+          : d,
+      );
     const onChannelUpdate = (c: ChannelDTO) =>
       setDetail((d) => (d && d.server.id === c.serverId ? { ...d, channels: d.channels.map((x) => (x.id === c.id ? c : x)) } : d));
     const onChannelDelete = ({ serverId, channelId }: { serverId: string; channelId: string }) => {
@@ -424,6 +447,10 @@ export default function App({
     socket.on("event:delete", onEventDelete);
     socket.on("event:alert", onEventAlert);
     socket.on("welcome:changed", onWelcomeChanged);
+    socket.on("roles:changed", onWelcomeChanged);
+    socket.on("category:new", putCategory);
+    socket.on("category:update", putCategory);
+    socket.on("category:delete", onCategoryDelete);
     socket.on("channel:update", onChannelUpdate);
     socket.on("channel:delete", onChannelDelete);
     socket.on("presence", onPresence);
@@ -446,6 +473,10 @@ export default function App({
       socket.off("event:delete", onEventDelete);
       socket.off("event:alert", onEventAlert);
       socket.off("welcome:changed", onWelcomeChanged);
+      socket.off("roles:changed", onWelcomeChanged);
+      socket.off("category:new", putCategory);
+      socket.off("category:update", putCategory);
+      socket.off("category:delete", onCategoryDelete);
       socket.off("channel:update", onChannelUpdate);
       socket.off("channel:delete", onChannelDelete);
       socket.off("presence", onPresence);
@@ -669,17 +700,17 @@ export default function App({
 
   const currentDetail = detail?.server.id === activeServerId ? detail : null;
   const onlineNow = { ...online, [me.id]: true };
-  const canManageChannels = !!currentDetail && can(currentDetail.server.role, "channel:manage");
+  const canManageChannels = !!currentDetail && can(currentDetail.server.standing, "channel:manage");
   const dmMode = activeServerId === DM_SCOPE;
   const activeDm = dmMode ? (dms.find((d) => d.id === activeChannelId) ?? null) : null;
   // A conversation is shown through the same chat view as a text channel.
   const channel: ChannelDTO | null = activeDm
-    ? { id: activeDm.id, serverId: DM_SCOPE, name: activeDm.peer.name, type: "text", position: 0, isPrivate: false, allowedRoles: [], allowedMembers: [] }
+    ? { id: activeDm.id, serverId: DM_SCOPE, name: activeDm.peer.name, type: "text", position: 0, categoryId: null, isPrivate: false, allowedRoles: [], allowedMembers: [] }
     : (currentDetail?.channels.find((c) => c.id === activeChannelId) ?? null);
   const dmMembers: MemberDTO[] = activeDm
     ? [
-        { user: me, role: "member", mutedUntil: null, joinedAt: "", badges: [] },
-        { user: activeDm.peer, role: "member", mutedUntil: null, joinedAt: "", badges: [] },
+        { user: me, owner: false, roles: [], mutedUntil: null, joinedAt: "", badges: [] },
+        { user: activeDm.peer, owner: false, roles: [], mutedUntil: null, joinedAt: "", badges: [] },
       ]
     : [];
   const settings: VoiceSettings = { deafened, lowData, setDeafened, setLowData };
@@ -749,7 +780,8 @@ export default function App({
               joiningId={joiningId}
               settings={settings}
               onSelect={selectChannel}
-              onAddChannel={(type) => setDialog({ kind: "channel", type })}
+              onAddChannel={(type, categoryId) => setDialog({ kind: "channel", type, categoryId })}
+              onCategory={(categoryId) => setDialog({ kind: "category", categoryId })}
               onEvents={() => setDialog({ kind: "events" })}
               onLeaveVoice={leaveVoice}
               onProfile={() => setDialog({ kind: "profile" })}
@@ -890,6 +922,7 @@ export default function App({
                   channel={channel}
                   search={search?.trim() ?? ""}
                   members={currentDetail?.members ?? dmMembers}
+                  roles={currentDetail?.roles ?? []}
                   online={onlineNow}
                   dm={activeDm?.peer}
                   rulesPending={!!currentDetail?.onboarding.rulesPending}
@@ -919,6 +952,7 @@ export default function App({
               me={me}
               server={currentDetail.server}
               members={currentDetail.members}
+              roles={currentDetail.roles}
               channels={currentDetail.channels}
               voiceStates={voiceStates}
               online={onlineNow}
@@ -979,6 +1013,7 @@ export default function App({
           <ServerSettingsDialog
             server={currentDetail.server}
             members={currentDetail.members}
+            roles={currentDetail.roles}
             channels={currentDetail.channels}
             discovery={currentDetail.discovery}
             welcome={currentDetail.welcome}
@@ -1026,7 +1061,8 @@ export default function App({
             key={dialog.userId}
             userId={dialog.userId}
             serverId={currentDetail?.server.id}
-            myRole={currentDetail?.server.role}
+            myStanding={currentDetail?.server.standing}
+            roles={currentDetail?.roles ?? []}
             member={currentDetail?.members.find((m) => m.user.id === dialog.userId)}
             online={!!online[dialog.userId]}
             onClose={() => setDialog(null)}
@@ -1039,6 +1075,8 @@ export default function App({
           <EditChannelDialog
             channel={currentDetail.channels.find((c) => c.id === dialog.channelId)!}
             members={currentDetail.members}
+            roles={currentDetail.roles}
+            categories={currentDetail.categories}
             onClose={() => setDialog(null)}
             onNotify={notify}
           />
@@ -1047,12 +1085,23 @@ export default function App({
           <CreateChannelDialog
             serverId={currentDetail.server.id}
             members={currentDetail.members}
+            roles={currentDetail.roles}
+            categories={currentDetail.categories}
             type={dialog.type}
+            categoryId={dialog.categoryId}
             onClose={() => setDialog(null)}
             onDone={(c) => {
               onChannelCreated(c);
               setDialog(null);
             }}
+          />
+        )}
+        {dialog?.kind === "category" && currentDetail && (dialog.categoryId === null || currentDetail.categories.some((c) => c.id === dialog.categoryId)) && (
+          <CategoryDialog
+            serverId={currentDetail.server.id}
+            category={currentDetail.categories.find((c) => c.id === dialog.categoryId) ?? null}
+            onClose={() => setDialog(null)}
+            onNotify={notify}
           />
         )}
 

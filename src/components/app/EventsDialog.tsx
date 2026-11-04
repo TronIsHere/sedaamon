@@ -62,7 +62,7 @@ export default function EventsDialog({
   onJoin: (channel: ChannelDTO) => void;
   onNotify: (message: string) => void;
 }) {
-  const canManage = can(server.role, "event:manage");
+  const canManage = can(server.standing, "event:manage");
   // Events are for the whole server, so a private room can't be their meeting place.
   const voice = channels.filter((c) => c.type === "voice" && !c.isPrivate);
   const [view, setView] = useState<View>(events.length || !canManage ? { kind: "list" } : { kind: "form" });

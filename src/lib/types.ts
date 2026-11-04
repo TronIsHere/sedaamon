@@ -1,5 +1,6 @@
+import type { Permission, Standing } from "./permissions";
+
 export type ChannelType = "text" | "voice";
-export type Role = "owner" | "admin" | "moderator" | "organizer" | "channel_manager" | "member";
 
 /** What a person chose to show next to their name. Whether they are connected is tracked separately. */
 export type Status = "available" | "busy" | "away" | "gaming";
@@ -26,7 +27,26 @@ export interface ServerDTO {
   id: string;
   name: string;
   inviteCode: string;
-  role: Role;
+  /** What the person asking may do here. */
+  standing: Standing;
+}
+
+/** A role the server made: a name and colour, the permissions it grants, and how high it ranks (higher is stronger). */
+export interface RoleDTO {
+  id: string;
+  serverId: string;
+  name: string;
+  color: string;
+  permissions: Permission[];
+  position: number;
+}
+
+/** A collapsible group of channels in the sidebar. */
+export interface CategoryDTO {
+  id: string;
+  serverId: string;
+  name: string;
+  position: number;
 }
 
 export interface ChannelDTO {
@@ -35,10 +55,12 @@ export interface ChannelDTO {
   name: string;
   type: ChannelType;
   position: number;
+  /** The category it sits in, or null for the channels above every category. */
+  categoryId: string | null;
   /** A private channel is only seen by those who may view private channels, the roles and the people it lists. */
   isPrivate: boolean;
-  /** Roles let into a private channel, besides the ones that see every private channel. Empty for public ones. */
-  allowedRoles: Role[];
+  /** Ids of roles let into a private channel, besides the ones that see every private channel. Empty for public ones. */
+  allowedRoles: string[];
   /** Ids of members let into a private channel by name. Empty for public ones. */
   allowedMembers: string[];
 }
@@ -48,7 +70,9 @@ export type BadgeId = "newcomer" | "rule_keeper" | "explorer";
 
 export interface MemberDTO {
   user: UserDTO;
-  role: Role;
+  owner: boolean;
+  /** Ids of the roles they hold. */
+  roles: string[];
   /** While in the future, the member can read but not write. */
   mutedUntil: string | null;
   joinedAt: string;
@@ -229,6 +253,9 @@ export interface OnboardingDTO {
 
 export interface ServerDetailDTO {
   server: ServerDTO;
+  /** Strongest first. */
+  roles: RoleDTO[];
+  categories: CategoryDTO[];
   channels: ChannelDTO[];
   members: MemberDTO[];
   voice: VoiceStates;

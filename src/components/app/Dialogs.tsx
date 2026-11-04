@@ -1,16 +1,17 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import { Camera, Download, Hash, Loader2, Lock, LogOut, Trash2, Volume2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera, Download, Hash, Loader2, Lock, LogOut, Trash2, Volume2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { resizeToAvatar } from "@/lib/image";
-import { can, CUSTOM_ROLES, ROLE_LABEL } from "@/lib/permissions";
+import { can, standingOf } from "@/lib/permissions";
 import { useCloseOnBack, useInstallPrompt } from "@/lib/mobile";
 import { toPersianDigits } from "@/lib/phone";
 import { STATUSES } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
-import type { ChannelDTO, ChannelType, MeDTO, MemberDTO, Role, ServerDTO, Status } from "@/lib/types";
+import type { CategoryDTO, ChannelDTO, ChannelType, MeDTO, MemberDTO, RoleDTO, ServerDTO, Status } from "@/lib/types";
+import Select from "@/components/ui/select";
 import Avatar from "./Avatar";
 
 export const inputClass =
@@ -132,10 +133,10 @@ export function ServerDialog({ onClose, onDone }: { onClose: () => void; onDone:
   );
 }
 
-/** Who a channel is for. Public by default; private ones list the roles and people let in. */
+/** Who a channel is for. Public by default; private ones list the roles (by id) and people let in. */
 interface ChannelAccessValue {
   isPrivate: boolean;
-  allowedRoles: Role[];
+  allowedRoles: string[];
   allowedMembers: string[];
 }
 
@@ -145,10 +146,20 @@ const sameAccess = (a: ChannelAccessValue, b: ChannelAccessValue) =>
   a.isPrivate === b.isPrivate &&
   (!a.isPrivate || (JSON.stringify([...a.allowedRoles].sort()) === JSON.stringify([...b.allowedRoles].sort()) && JSON.stringify([...a.allowedMembers].sort()) === JSON.stringify([...b.allowedMembers].sort())));
 
-function ChannelAccessFields({ value, members, onChange }: { value: ChannelAccessValue; members: MemberDTO[]; onChange: (v: ChannelAccessValue) => void }) {
+function ChannelAccessFields({
+  value,
+  members,
+  roles: allRoles,
+  onChange,
+}: {
+  value: ChannelAccessValue;
+  members: MemberDTO[];
+  roles: RoleDTO[];
+  onChange: (v: ChannelAccessValue) => void;
+}) {
   // Whoever sees every private channel is let in anyway, so listing them would only be noise.
-  const roles = CUSTOM_ROLES.filter((r) => !can(r, "channel:view_private"));
-  const people = members.filter((m) => !can(m.role, "channel:view_private"));
+  const roles = allRoles.filter((r) => !r.permissions.includes("channel:view_private"));
+  const people = members.filter((m) => !can(standingOf(m, allRoles), "channel:view_private"));
   return (
     <div className="space-y-3">
       <label
@@ -161,29 +172,32 @@ function ChannelAccessFields({ value, members, onChange }: { value: ChannelAcces
         <Lock className="size-5 text-muted" />
         <div>
           <p className="font-semibold">کانال خصوصی</p>
-          <p className="text-xs text-muted">فقط مالک، مدیران، مدیران کانال و کسانی که انتخاب می‌کنید آن را می‌بینند</p>
+          <p className="text-xs text-muted">فقط مالک، نقش‌هایی که همهٔ کانال‌های خصوصی را می‌بینند و کسانی که انتخاب می‌کنید</p>
         </div>
       </label>
 
       {value.isPrivate && (
         <>
-          <fieldset className="space-y-1.5">
-            <legend className="text-sm text-muted">نقش‌هایی که وارد می‌شوند</legend>
-            <div className="flex flex-wrap gap-2">
-              {roles.map((r) => (
-                <label
-                  key={r}
-                  className={cn(
-                    "cursor-pointer rounded-full border px-3 py-1 text-sm",
-                    value.allowedRoles.includes(r) ? "border-accent bg-accent-strong/10" : "border-line text-muted hover:bg-ink-800",
-                  )}
-                >
-                  <input type="checkbox" className="sr-only" checked={value.allowedRoles.includes(r)} onChange={() => onChange({ ...value, allowedRoles: toggle(value.allowedRoles, r) })} />
-                  {ROLE_LABEL[r]}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          {roles.length > 0 && (
+            <fieldset className="space-y-1.5">
+              <legend className="text-sm text-muted">نقش‌هایی که وارد می‌شوند</legend>
+              <div className="flex flex-wrap gap-2">
+                {roles.map((r) => (
+                  <label
+                    key={r.id}
+                    className={cn(
+                      "inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-sm",
+                      value.allowedRoles.includes(r.id) ? "border-accent bg-accent-strong/10" : "border-line text-muted hover:bg-ink-800",
+                    )}
+                  >
+                    <input type="checkbox" className="sr-only" checked={value.allowedRoles.includes(r.id)} onChange={() => onChange({ ...value, allowedRoles: toggle(value.allowedRoles, r.id) })} />
+                    <span className="size-2 rounded-full" style={{ backgroundColor: r.color }} />
+                    {r.name}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )}
 
           <fieldset className="space-y-1.5">
             <legend className="text-sm text-muted">
@@ -214,24 +228,49 @@ function ChannelAccessFields({ value, members, onChange }: { value: ChannelAcces
   );
 }
 
+/** Which category a channel sits in. Hidden while the server has none. */
+function CategoryField({ categories, value, onChange }: { categories: CategoryDTO[]; value: string | null; onChange: (id: string | null) => void }) {
+  if (!categories.length) return null;
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-sm text-muted">دسته</span>
+      <Select value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} className="text-sm">
+        <option value="">بدون دسته</option>
+        {categories.map((c) => (
+          <option key={c.id} value={c.id}>
+            {c.name}
+          </option>
+        ))}
+      </Select>
+    </label>
+  );
+}
+
 export function CreateChannelDialog({
   serverId,
   members,
+  roles,
+  categories,
   type: initialType,
+  categoryId: initialCategory,
   onClose,
   onDone,
 }: {
   serverId: string;
   members: MemberDTO[];
+  roles: RoleDTO[];
+  categories: CategoryDTO[];
   type: ChannelType;
+  categoryId: string | null;
   onClose: () => void;
   onDone: (c: ChannelDTO) => void;
 }) {
   const [type, setType] = useState(initialType);
   const [name, setName] = useState("");
+  const [categoryId, setCategoryId] = useState(initialCategory);
   const [access, setAccess] = useState<ChannelAccessValue>({ isPrivate: false, allowedRoles: [], allowedMembers: [] });
   const { busy, error, submit } = useSubmit(
-    () => api<{ channel: ChannelDTO }>(`/api/servers/${serverId}/channels`, { body: { name, type, ...access } }),
+    () => api<{ channel: ChannelDTO }>(`/api/servers/${serverId}/channels`, { body: { name, type, categoryId, ...access } }),
     (res) => onDone(res.channel),
   );
 
@@ -262,7 +301,8 @@ export function CreateChannelDialog({
           <span className="text-sm text-muted">نام کانال</span>
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={32} autoFocus />
         </label>
-        <ChannelAccessFields value={access} members={members} onChange={setAccess} />
+        <CategoryField categories={categories} value={categoryId} onChange={setCategoryId} />
+        <ChannelAccessFields value={access} members={members} roles={roles} onChange={setAccess} />
         {error && <p className="text-sm text-danger">{error}</p>}
         <SubmitButton busy={busy} disabled={!name.trim()}>
           ساختن کانال
@@ -467,22 +507,27 @@ export function ProfileDialog({
 export function EditChannelDialog({
   channel,
   members,
+  roles,
+  categories,
   onClose,
   onNotify,
 }: {
   channel: ChannelDTO;
   members: MemberDTO[];
+  roles: RoleDTO[];
+  categories: CategoryDTO[];
   onClose: () => void;
   onNotify: (message: string) => void;
 }) {
   const [name, setName] = useState(channel.name);
+  const [categoryId, setCategoryId] = useState(channel.categoryId);
   const saved: ChannelAccessValue = { isPrivate: channel.isPrivate, allowedRoles: channel.allowedRoles, allowedMembers: channel.allowedMembers };
   const [access, setAccess] = useState<ChannelAccessValue>(saved);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // The server broadcasts the rename and the deletion, which updates every open screen including this one.
   const { busy, error, submit } = useSubmit(
-    () => api(`/api/channels/${channel.id}`, { method: "PATCH", body: { name, ...access } }),
+    () => api(`/api/channels/${channel.id}`, { method: "PATCH", body: { name, categoryId, ...access } }),
     onClose,
   );
 
@@ -505,9 +550,10 @@ export function EditChannelDialog({
           <span className="text-sm text-muted">نام کانال</span>
           <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={32} autoFocus />
         </label>
-        <ChannelAccessFields value={access} members={members} onChange={setAccess} />
+        <CategoryField categories={categories} value={categoryId} onChange={setCategoryId} />
+        <ChannelAccessFields value={access} members={members} roles={roles} onChange={setAccess} />
         {error && <p className="text-sm text-danger">{error}</p>}
-        <SubmitButton busy={busy} disabled={!name.trim() || (name.trim() === channel.name && sameAccess(access, saved))}>
+        <SubmitButton busy={busy} disabled={!name.trim() || (name.trim() === channel.name && categoryId === channel.categoryId && sameAccess(access, saved))}>
           ذخیره
         </SubmitButton>
       </form>
@@ -541,6 +587,92 @@ export function EditChannelDialog({
           </button>
         )}
       </div>
+    </Modal>
+  );
+}
+
+/** Make a category (`category` null), or rename, move or delete one. Its channels outlive it and move above every category. */
+export function CategoryDialog({
+  serverId,
+  category,
+  onClose,
+  onNotify,
+}: {
+  serverId: string;
+  category: CategoryDTO | null;
+  onClose: () => void;
+  onNotify: (message: string) => void;
+}) {
+  const [name, setName] = useState(category?.name ?? "");
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [working, setWorking] = useState(false);
+  const path = category ? `/api/servers/${serverId}/categories/${category.id}` : `/api/servers/${serverId}/categories`;
+  // The server broadcasts every change, which updates the sidebar on every open screen including this one.
+  const { busy, error, submit } = useSubmit(() => api(path, category ? { method: "PATCH", body: { name } } : { body: { name } }), onClose);
+
+  const act = async (action: () => Promise<unknown>, close: boolean) => {
+    setWorking(true);
+    try {
+      await action();
+      if (close) onClose();
+    } catch (err) {
+      onNotify((err as Error).message);
+    }
+    setWorking(false);
+    setConfirmDelete(false);
+  };
+  const move = (direction: "up" | "down") => act(() => api(path, { method: "PATCH", body: { move: direction } }), false);
+
+  return (
+    <Modal title={category ? "تنظیمات دسته" : "ساختن دسته"} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <label className="block space-y-1.5">
+          <span className="text-sm text-muted">نام دسته</span>
+          <input className={inputClass} value={name} onChange={(e) => setName(e.target.value)} maxLength={32} autoFocus />
+        </label>
+        {error && <p className="text-sm text-danger">{error}</p>}
+        <SubmitButton busy={busy} disabled={!name.trim() || name.trim() === category?.name}>
+          {category ? "ذخیره" : "ساختن دسته"}
+        </SubmitButton>
+      </form>
+      {category && (
+        <>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button onClick={() => move("up")} disabled={working} className="flex items-center justify-center gap-2 rounded-xl bg-ink-800 px-4 py-2.5 text-sm text-muted hover:text-fg disabled:opacity-60">
+              <ArrowUp className="size-4" />
+              بالاتر
+            </button>
+            <button onClick={() => move("down")} disabled={working} className="flex items-center justify-center gap-2 rounded-xl bg-ink-800 px-4 py-2.5 text-sm text-muted hover:text-fg disabled:opacity-60">
+              <ArrowDown className="size-4" />
+              پایین‌تر
+            </button>
+          </div>
+          <div className="mt-5 border-t border-line pt-4">
+            {confirmDelete ? (
+              <div className="rounded-xl bg-danger/10 p-3">
+                <p className="mb-2 text-sm leading-6">دستهٔ «{category.name}» حذف شود؟ کانال‌هایش حذف نمی‌شوند و به بالای فهرست می‌روند.</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => act(() => api(path, { method: "DELETE" }), true)}
+                    disabled={working}
+                    className="rounded-xl bg-danger-strong px-4 py-2.5 text-sm font-semibold text-white hover:bg-danger-strong/90 disabled:opacity-60"
+                  >
+                    حذف دسته
+                  </button>
+                  <button onClick={() => setConfirmDelete(false)} className="rounded-xl bg-ink-800 px-4 py-2.5 text-sm text-muted hover:text-fg">
+                    انصراف
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmDelete(true)} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-danger hover:bg-danger/10">
+                <Trash2 className="size-4" />
+                حذف دسته
+              </button>
+            )}
+          </div>
+        </>
+      )}
     </Modal>
   );
 }

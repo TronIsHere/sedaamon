@@ -7,10 +7,10 @@ import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { useSwipe } from "@/lib/mobile";
 import { useNotificationPref } from "@/lib/notifications";
-import { can, isMuted, ROLE_LABEL, ROLE_RANK } from "@/lib/permissions";
+import { can, isMuted, OWNER_LABEL, standingOf, topRole } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { statusLine } from "@/lib/status";
-import type { ChannelDTO, MeDTO, MemberDTO, ServerDTO, VoiceStates } from "@/lib/types";
+import type { ChannelDTO, MeDTO, MemberDTO, RoleDTO, ServerDTO, VoiceStates } from "@/lib/types";
 import Avatar, { ServerAvatar } from "./Avatar";
 import { BadgeIcon } from "./Badges";
 import { RoleIcon } from "./RoleBadge";
@@ -23,6 +23,7 @@ export default function MembersList({
   me,
   server,
   members,
+  roles,
   channels,
   voiceStates,
   online,
@@ -36,6 +37,7 @@ export default function MembersList({
   me: MeDTO;
   server: ServerDTO;
   members: MemberDTO[];
+  roles: RoleDTO[];
   channels: ChannelDTO[];
   voiceStates: VoiceStates;
   online: Record<string, boolean>;
@@ -52,9 +54,10 @@ export default function MembersList({
   const inVoice = new Set(liveVoice.flatMap((c) => voiceStates[c.id].map((p) => p.id)));
   const [confirmLeave, setConfirmLeave] = useState(false);
   // Higher roles first, then people in voice, then by name.
+  const rank = new Map(members.map((m) => [m.user.id, standingOf(m, roles).rank]));
   const sorted = [...members].sort(
     (a, b) =>
-      ROLE_RANK[b.role] - ROLE_RANK[a.role] ||
+      rank.get(b.user.id)! - rank.get(a.user.id)! ||
       Number(inVoice.has(b.user.id)) - Number(inVoice.has(a.user.id)) ||
       a.user.name.localeCompare(b.user.name, "fa"),
   );
@@ -117,7 +120,7 @@ export default function MembersList({
           <h2 className="mt-4 max-w-full truncate text-lg font-bold">{server.name}</h2>
           <p className="mt-0.5 text-xs text-muted">
             {toPersianDigits(members.length)} عضو
-            {server.role !== "member" && ` · شما ${ROLE_LABEL[server.role]} این سرور هستید`}
+            {server.standing.owner && ` · شما ${OWNER_LABEL} هستید`}
           </p>
         </div>
 
@@ -128,7 +131,7 @@ export default function MembersList({
           دعوت دیگران
           <Plus className="size-4" />
         </button>
-        {can(server.role, "server:manage") && (
+        {(can(server.standing, "server:manage") || can(server.standing, "role:manage")) && (
           <button
             onClick={onSettings}
             className="flex items-center justify-between rounded-xl py-3 text-sm font-semibold text-muted transition hover:text-fg"
@@ -185,10 +188,10 @@ export default function MembersList({
           اعضا
           <span className="text-xs font-normal text-muted">({toPersianDigits(members.length)})</span>
         </h3>
-        <MemberGroup title="آنلاین" members={onlineMembers} inVoice={inVoice} online={online} meId={me.id} onOpenProfile={onOpenProfile} />
-        <MemberGroup title="آفلاین" members={offlineMembers} inVoice={inVoice} online={online} meId={me.id} onOpenProfile={onOpenProfile} dim />
+        <MemberGroup title="آنلاین" members={onlineMembers} roles={roles} inVoice={inVoice} online={online} meId={me.id} onOpenProfile={onOpenProfile} />
+        <MemberGroup title="آفلاین" members={offlineMembers} roles={roles} inVoice={inVoice} online={online} meId={me.id} onOpenProfile={onOpenProfile} dim />
 
-        {server.role !== "owner" && (
+        {!server.standing.owner && (
           <div className="mt-4 border-t border-line pt-3">
             {confirmLeave ? (
               <div className="rounded-xl bg-danger/10 p-3">
@@ -221,6 +224,7 @@ export default function MembersList({
 function MemberGroup({
   title,
   members,
+  roles,
   inVoice,
   online,
   meId,
@@ -229,6 +233,7 @@ function MemberGroup({
 }: {
   title: string;
   members: MemberDTO[];
+  roles: RoleDTO[];
   inVoice: Set<string>;
   online: Record<string, boolean>;
   meId: string;
@@ -244,6 +249,7 @@ function MemberGroup({
       <ul className="space-y-0.5">
         {members.map((m) => {
           const muted = isMuted(m.mutedUntil);
+          const top = topRole(m, roles);
           return (
             <li key={m.user.id}>
               <button
@@ -253,15 +259,17 @@ function MemberGroup({
                 <Avatar user={m.user} online={m.user.id === meId || !!online[m.user.id]} />
                 <div className="min-w-0 flex-1 leading-5">
                   <p className="flex items-center gap-1.5 text-sm font-semibold">
-                    <span className="truncate">{m.user.name}</span>
-                    <RoleIcon role={m.role} />
+                    <span className="truncate" style={{ color: top?.color }}>
+                      {m.user.name}
+                    </span>
+                    <RoleIcon member={m} roles={roles} />
                     {m.badges.includes("newcomer") && <BadgeIcon id="newcomer" size={18} />}
                     {muted && <BellOff className="size-3.5 shrink-0 text-amber-300" aria-label="بی‌صدا شده" />}
                   </p>
                   <p dir="auto" className="truncate text-xs text-muted">
                     {inVoice.has(m.user.id)
                       ? "در کانال صوتی"
-                      : (online[m.user.id] && statusLine(m.user)) || (m.role === "member" ? "عضو" : ROLE_LABEL[m.role])}
+                      : (online[m.user.id] && statusLine(m.user)) || (m.owner ? OWNER_LABEL : (top?.name ?? "عضو"))}
                   </p>
                 </div>
               </button>

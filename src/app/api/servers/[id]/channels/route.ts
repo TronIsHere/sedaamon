@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { channelAudience } from "@/server/access";
-import { channelAccessInput, membersOf } from "@/server/channels";
+import { categoryOf, channelAccessInput, membersOf, rolesOf } from "@/server/channels";
 import { assertPermission, handle, HttpError, requireMember, requireUser } from "@/server/http";
 import { Channel } from "@/server/models";
 import { emitToAudience } from "@/server/realtime";
@@ -23,8 +23,9 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/servers/[id]/chan
     name,
     type: body.type,
     position: (last?.position ?? 0) + 1,
+    category: await categoryOf(id, body.categoryId ?? null),
     isPrivate,
-    allowedRoles: isPrivate ? (body.allowedRoles ?? []) : [],
+    allowedRoles: isPrivate ? await rolesOf(id, body.allowedRoles ?? []) : [],
     allowedMembers: isPrivate ? await membersOf(id, body.allowedMembers ?? []) : [],
   });
   const channel = toChannel(doc);

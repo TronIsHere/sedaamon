@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParticipants } from "@livekit/components-react";
-import { CalendarClock, ChevronDown, Hash, Link2, Loader2, Lock, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
+import { CalendarClock, ChevronDown, FolderPlus, Hash, Link2, Loader2, Lock, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { can } from "@/lib/permissions";
@@ -39,6 +39,7 @@ export default function ChannelSidebar({
   settings,
   onSelect,
   onAddChannel,
+  onCategory,
   onEvents,
   onLeaveVoice,
   onProfile,
@@ -54,7 +55,10 @@ export default function ChannelSidebar({
   joiningId: string | null;
   settings: VoiceSettings;
   onSelect: (c: ChannelDTO) => void;
-  onAddChannel: (type: ChannelType) => void;
+  /** Opens the new-channel dialog, inside a category or (null) above them all. */
+  onAddChannel: (type: ChannelType, categoryId: string | null) => void;
+  /** Opens a category's settings, or (null) makes a new one. */
+  onCategory: (categoryId: string | null) => void;
   onEvents: () => void;
   onLeaveVoice: () => void;
   onProfile: () => void;
@@ -69,9 +73,67 @@ export default function ChannelSidebar({
   const matches = (c: ChannelDTO) => matchesSearch(c.name, q);
   const dmMatches = (d: DmDTO) => matchesSearch(d.peer.name, q);
 
-  const canManage = !!detail && can(detail.server.role, "channel:manage");
-  const text = detail?.channels.filter((c) => c.type === "text" && matches(c)) ?? [];
-  const voice = detail?.channels.filter((c) => c.type === "voice" && matches(c)) ?? [];
+  const canManage = !!detail && can(detail.server.standing, "channel:manage");
+  const shown = detail?.channels.filter(matches) ?? [];
+  // Channels whose category is gone (or not loaded yet) count as having none.
+  const known = new Set(detail?.categories.map((c) => c.id));
+  const loose = shown.filter((c) => !c.categoryId || !known.has(c.categoryId));
+  const text = loose.filter((c) => c.type === "text");
+  const voice = loose.filter((c) => c.type === "voice");
+  // Without categories the two plain sections are where channels get added, so they stay even when empty.
+  const plainSections = !q && !detail?.categories.length;
+  const inCategory = (id: string) => {
+    const list = shown.filter((c) => c.categoryId === id);
+    // Text channels above voice ones, as in the plain sections.
+    return [...list.filter((c) => c.type === "text"), ...list.filter((c) => c.type === "voice")];
+  };
+
+  const renderChannel = (c: ChannelDTO) => {
+    if (c.type === "text") {
+      const count = c.id === activeChannelId ? 0 : (unread[c.id]?.count ?? 0);
+      const pinged = c.id === activeChannelId ? 0 : (unread[c.id]?.mentions ?? 0);
+      return (
+        <ChannelButton key={c.id} active={c.id === activeChannelId} onClick={() => onSelect(c)}>
+          {c.isPrivate ? <Lock className="size-4 shrink-0 opacity-70" aria-label="کانال خصوصی" /> : <Hash className="size-4 shrink-0 opacity-70" />}
+          <span className={cn("truncate", count > 0 && "font-semibold text-fg")}>{c.name}</span>
+          {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="ms-auto" />}
+        </ChannelButton>
+      );
+    }
+    const connectedHere = connection?.channelId === c.id;
+    const people = voiceStates[c.id] ?? [];
+    return (
+      <div key={c.id}>
+        <ChannelButton active={c.id === activeChannelId} onClick={() => onSelect(c)}>
+          {joiningId === c.id ? (
+            <Loader2 className="size-4 shrink-0 animate-spin" />
+          ) : (
+            <Volume2 className={cn("size-4 shrink-0 opacity-70", connectedHere && "text-online opacity-100")} />
+          )}
+          <span className={cn("truncate", people.length > 0 && "font-semibold text-fg")}>{c.name}</span>
+          {c.isPrivate && <Lock className="size-3 shrink-0 opacity-60" aria-label="کانال خصوصی" />}
+          {people.length > 0 && <span className="ms-auto text-xs text-muted">{toPersianDigits(people.length)}</span>}
+        </ChannelButton>
+        {people.length > 0 && (
+          <ul className="ms-4 space-y-0.5 py-1 ps-2">
+            {people.map((p) => {
+              const lp = connectedHere ? live.get(p.id) : undefined;
+              return (
+                <li key={p.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-muted">
+                  <Avatar user={p} size="sm" speaking={lp?.isSpeaking} />
+                  <span className={cn("truncate", lp?.isSpeaking && "text-fg")}>{p.name}</span>
+                  {lp && !lp.isMicrophoneEnabled && <MicOff className="ms-auto size-3.5 shrink-0 text-danger/80" />}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    );
+  };
+  // A collapsed section still shows the open channel and the voice room you're in, so neither gets lost.
+  const keepVisible = (c: ChannelDTO) => c.id === activeChannelId || c.id === connection?.channelId;
+
   const newCount = detail
     ? detail.channels.reduce((n, c) => n + (c.id === activeChannelId ? 0 : (unread[c.id]?.count ?? 0)), 0)
     : 0;
@@ -126,57 +188,53 @@ export default function ChannelSidebar({
           <SidebarSkeleton />
         ) : (
           <>
-            <Section title="کانال‌های متنی" canAdd={canManage} onAdd={() => onAddChannel("text")}>
-              {text.map((c) => {
-                const count = c.id === activeChannelId ? 0 : (unread[c.id]?.count ?? 0);
-                const pinged = c.id === activeChannelId ? 0 : (unread[c.id]?.mentions ?? 0);
-                return (
-                  <ChannelButton key={c.id} active={c.id === activeChannelId} onClick={() => onSelect(c)}>
-                    {c.isPrivate ? <Lock className="size-4 shrink-0 opacity-70" aria-label="کانال خصوصی" /> : <Hash className="size-4 shrink-0 opacity-70" />}
-                    <span className={cn("truncate", count > 0 && "font-semibold text-fg")}>{c.name}</span>
-                    {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="ms-auto" />}
-                  </ChannelButton>
-                );
-              })}
-            </Section>
-
-            <Section title="کانال‌های صوتی" canAdd={canManage} onAdd={() => onAddChannel("voice")}>
-              {voice.map((c) => {
-                const connectedHere = connection?.channelId === c.id;
-                const people = voiceStates[c.id] ?? [];
-                return (
-                  <div key={c.id}>
-                    <ChannelButton active={c.id === activeChannelId} onClick={() => onSelect(c)}>
-                      {joiningId === c.id ? (
-                        <Loader2 className="size-4 shrink-0 animate-spin" />
-                      ) : (
-                        <Volume2 className={cn("size-4 shrink-0 opacity-70", connectedHere && "text-online opacity-100")} />
-                      )}
-                      <span className={cn("truncate", people.length > 0 && "font-semibold text-fg")}>{c.name}</span>
-                      {c.isPrivate && <Lock className="size-3 shrink-0 opacity-60" aria-label="کانال خصوصی" />}
-                      {people.length > 0 && (
-                        <span className="ms-auto text-xs text-muted">{toPersianDigits(people.length)}</span>
-                      )}
-                    </ChannelButton>
-                    {people.length > 0 && (
-                      <ul className="ms-4 space-y-0.5 py-1 ps-2">
-                        {people.map((p) => {
-                          const lp = connectedHere ? live.get(p.id) : undefined;
-                          return (
-                            <li key={p.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm text-muted">
-                              <Avatar user={p} size="sm" speaking={lp?.isSpeaking} />
-                              <span className={cn("truncate", lp?.isSpeaking && "text-fg")}>{p.name}</span>
-                              {lp && !lp.isMicrophoneEnabled && <MicOff className="ms-auto size-3.5 shrink-0 text-danger/80" />}
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    )}
-                  </div>
-                );
-              })}
-            </Section>
-            {q && !text.length && !voice.length && <p className="px-2 text-center text-sm text-muted">کانالی پیدا نشد</p>}
+            {(plainSections || text.length > 0) && (
+              <Section
+                id={`${detail.server.id}:text`}
+                title="کانال‌های متنی"
+                channels={text}
+                keepVisible={keepVisible}
+                renderChannel={renderChannel}
+                onAdd={canManage ? () => onAddChannel("text", null) : undefined}
+              />
+            )}
+            {(plainSections || voice.length > 0) && (
+              <Section
+                id={`${detail.server.id}:voice`}
+                title="کانال‌های صوتی"
+                channels={voice}
+                keepVisible={keepVisible}
+                renderChannel={renderChannel}
+                onAdd={canManage ? () => onAddChannel("voice", null) : undefined}
+              />
+            )}
+            {detail.categories.map((cat) => {
+              const channels = inCategory(cat.id);
+              // An empty category only matters to those who can fill it, and never while searching.
+              if (!channels.length && (q || !canManage)) return null;
+              return (
+                <Section
+                  key={cat.id}
+                  id={cat.id}
+                  title={cat.name}
+                  channels={channels}
+                  keepVisible={keepVisible}
+                  renderChannel={renderChannel}
+                  onAdd={canManage ? () => onAddChannel("text", cat.id) : undefined}
+                  onEdit={canManage ? () => onCategory(cat.id) : undefined}
+                />
+              );
+            })}
+            {canManage && !q && (
+              <button
+                onClick={() => onCategory(null)}
+                className="flex min-h-11 w-full items-center justify-center gap-2 rounded-[1.75rem] border border-dashed border-line text-sm text-muted transition-colors hover:border-accent/50 hover:text-fg"
+              >
+                <FolderPlus className="size-4" />
+                دستهٔ تازه
+              </button>
+            )}
+            {q && !shown.length && <p className="px-2 text-center text-sm text-muted">کانالی پیدا نشد</p>}
           </>
         )}
       </div>
@@ -221,7 +279,7 @@ export default function ChannelSidebar({
 function EventsEntry({ detail, onClick }: { detail: ServerDetailDTO; onClick: () => void }) {
   const now = useNow();
   const next = detail.events.find((e) => isRunning(e, now) || new Date(e.startsAt).getTime() > now);
-  if (!next && !can(detail.server.role, "event:manage")) return null;
+  if (!next && !can(detail.server.standing, "event:manage")) return null;
   const running = !!next && isRunning(next, now);
   return (
     <div>
@@ -312,32 +370,71 @@ function SidebarSkeleton() {
   );
 }
 
+const COLLAPSED_KEY = "sedaamon:collapsed";
+
+/** Which sections this browser has folded away. Storage can be missing or blocked, in which case everything starts open. */
+function readCollapsed(): string[] {
+  try {
+    const list = JSON.parse(localStorage.getItem(COLLAPSED_KEY) ?? "[]");
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+function useCollapsed(id: string) {
+  const [collapsed, setCollapsed] = useState(() => readCollapsed().includes(id));
+  const toggle = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      const rest = readCollapsed().filter((x) => x !== id);
+      localStorage.setItem(COLLAPSED_KEY, JSON.stringify(next ? [...rest, id] : rest));
+    } catch {}
+  };
+  return [collapsed, toggle] as const;
+}
+
+/** A card of channels: the plain text or voice list, or a category. Folding it is remembered per browser. */
 function Section({
+  id,
   title,
-  canAdd,
+  channels,
+  keepVisible,
+  renderChannel,
   onAdd,
-  children,
+  onEdit,
 }: {
+  id: string;
   title: string;
-  canAdd: boolean;
-  onAdd: () => void;
-  children: React.ReactNode;
+  channels: ChannelDTO[];
+  keepVisible: (c: ChannelDTO) => boolean;
+  renderChannel: (c: ChannelDTO) => React.ReactNode;
+  onAdd?: () => void;
+  onEdit?: () => void;
 }) {
-  const [open, setOpen] = useState(true);
+  const [collapsed, toggle] = useCollapsed(id);
+  const visible = collapsed ? channels.filter(keepVisible) : channels;
   return (
     <section className="rounded-[1.75rem] bg-ink-900 px-2 py-2.5">
-      <div className="flex items-center justify-between ps-2 pe-0.5">
-        <button onClick={() => setOpen(!open)} className="flex min-h-9 items-center gap-1.5 rounded-lg text-[15px] font-semibold text-fg transition-colors hover:text-accent" aria-expanded={open}>
-          {title}
-          <ChevronDown className={cn("size-4 text-muted transition-transform", !open && "ltr:-rotate-90 rtl:rotate-90")} />
+      <div className="flex items-center gap-0.5 ps-2 pe-0.5">
+        <button onClick={toggle} className="flex min-h-9 min-w-0 flex-1 items-center gap-1.5 rounded-lg text-start text-[15px] font-semibold text-fg transition-colors hover:text-accent" aria-expanded={!collapsed}>
+          <span className="truncate">{title}</span>
+          <ChevronDown className={cn("size-4 shrink-0 text-muted transition-transform", collapsed && "ltr:-rotate-90 rtl:rotate-90")} />
         </button>
-        {canAdd && (
-          <button onClick={onAdd} title="ساختن کانال" aria-label="ساختن کانال" className="grid size-9 place-items-center rounded-full text-fg transition-colors hover:bg-ink-800">
+        {onEdit && (
+          <button onClick={onEdit} title="تنظیمات دسته" aria-label={`تنظیمات دستهٔ ${title}`} className="grid size-9 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-ink-800 hover:text-fg">
+            <Settings className="size-4" />
+          </button>
+        )}
+        {onAdd && (
+          <button onClick={onAdd} title="ساختن کانال" aria-label="ساختن کانال" className="grid size-9 shrink-0 place-items-center rounded-full text-fg transition-colors hover:bg-ink-800">
             <Plus className="size-5" />
           </button>
         )}
       </div>
-      {open && <div className="mt-1 space-y-0.5">{children}</div>}
+      {visible.length > 0 && <div className="mt-1 space-y-0.5">{visible.map(renderChannel)}</div>}
+      {!collapsed && !channels.length && <p className="px-3 pt-1 text-xs text-muted">هنوز کانالی ندارد</p>}
     </section>
   );
 }

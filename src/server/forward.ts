@@ -6,6 +6,7 @@ import { listFriends } from "./friends";
 import { assertCanWrite, assertId, HttpError, requireMessageScope, type MessageScope } from "./http";
 import { serializeMessage } from "./messages";
 import { Channel, Member, Message, Server, User } from "./models";
+import { memberStanding, rolesByServer } from "./roles";
 
 const DM_SOURCE = "پیام مستقیم";
 
@@ -62,9 +63,10 @@ export async function forwardMessage(
 /** Every place this person can forward to: writable text channels of their servers, and people they may message. */
 export async function listForwardTargets(userId: Types.ObjectId): Promise<ForwardTargetsDTO> {
   const memberships = await Member.find({ user: userId }).lean();
-  const [servers, channels] = await Promise.all([
+  const [servers, channels, roles] = await Promise.all([
     Server.find({ _id: { $in: memberships.map((m) => m.server) } }, { name: 1 }).lean(),
     Channel.find({ server: { $in: memberships.map((m) => m.server) }, type: "text" }).sort({ position: 1, createdAt: 1 }).lean(),
+    rolesByServer(memberships.map((m) => m.server)),
   ]);
   const memberOf = new Map(memberships.map((m) => [String(m.server), m]));
   const now = Date.now();
@@ -73,7 +75,8 @@ export async function listForwardTargets(userId: Types.ObjectId): Promise<Forwar
     const member = memberOf.get(String(s._id));
     // Muted people and those who haven't accepted the rules can't write there, so there is no point offering it.
     if (!member || member.rulesPending || (member.mutedUntil && member.mutedUntil.getTime() > now)) return [];
-    const list = channels.filter((c) => String(c.server) === String(s._id) && memberCanView(c, member)).map((c) => ({ id: String(c._id), name: c.name }));
+    const viewer = { user: member.user, standing: memberStanding(member, roles.get(String(s._id)) ?? []) };
+    const list = channels.filter((c) => String(c.server) === String(s._id) && memberCanView(c, viewer)).map((c) => ({ id: String(c._id), name: c.name }));
     return list.length ? [{ id: String(s._id), name: s.name, channels: list }] : [];
   });
 

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { channelAudience } from "@/server/access";
-import { broadcastChannelChange, channelAccessInput, detachEvents, membersOf } from "@/server/channels";
+import { broadcastChannelChange, categoryOf, channelAccessInput, detachEvents, membersOf, rolesOf } from "@/server/channels";
 import { assertPermission, handle, HttpError, requireChannelAccess, requireUser } from "@/server/http";
 import { Channel, Event, Message } from "@/server/models";
 import { emitToAudience } from "@/server/realtime";
@@ -27,6 +27,7 @@ export const PATCH = handle(async (req, ctx: RouteContext<"/api/channels/[id]">)
     if (clean.length < 1 || clean.length > 32) throw new HttpError(400, "نام کانال باید بین ۱ تا ۳۲ حرف باشد");
     update.name = clean;
   }
+  if (body.categoryId !== undefined) update.category = await categoryOf(String(before.server), body.categoryId);
 
   const isPrivate = body.isPrivate ?? !!before.isPrivate;
   if (body.isPrivate !== undefined) update.isPrivate = isPrivate;
@@ -35,7 +36,7 @@ export const PATCH = handle(async (req, ctx: RouteContext<"/api/channels/[id]">)
     update.allowedRoles = [];
     update.allowedMembers = [];
   } else {
-    if (body.allowedRoles !== undefined) update.allowedRoles = body.allowedRoles;
+    if (body.allowedRoles !== undefined) update.allowedRoles = await rolesOf(String(before.server), body.allowedRoles);
     if (body.allowedMembers !== undefined) update.allowedMembers = await membersOf(String(before.server), body.allowedMembers);
   }
 
