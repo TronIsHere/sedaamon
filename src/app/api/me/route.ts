@@ -33,7 +33,7 @@ export const PATCH = handle(async (req) => {
     if (text.length > 60) throw new HttpError(400, "متن وضعیت نباید بیشتر از ۶۰ حرف باشد");
     update.statusText = text;
   }
-  const updated = await User.findByIdAndUpdate(user._id, update, { new: true }).lean();
+  const updated = await User.findByIdAndUpdate(user._id, update, { returnDocument: "after" }).lean();
   void emitUserUpdate(toUser(updated!));
   return { user: toMe(updated!) };
 });

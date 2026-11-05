@@ -30,13 +30,13 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
       .sort({ position: up ? -1 : 1 })
       .lean();
     if (neighbour) {
-      const moved = await Category.findByIdAndUpdate(neighbour._id, { position: category.position }, { new: true }).lean();
+      const moved = await Category.findByIdAndUpdate(neighbour._id, { position: category.position }, { returnDocument: "after" }).lean();
       emitToServer(serverId, "category:update", toCategory(moved!));
       update.position = neighbour.position;
     }
   }
 
-  const saved = await Category.findByIdAndUpdate(category._id, update, { new: true }).lean();
+  const saved = await Category.findByIdAndUpdate(category._id, update, { returnDocument: "after" }).lean();
   const dto = toCategory(saved!);
   emitToServer(serverId, "category:update", dto);
   return { category: dto };

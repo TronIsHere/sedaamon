@@ -49,7 +49,8 @@ export default function PixelScene({ src, poster, className }: { src: string; po
 
       const fromVideo = !reduced && video.readyState >= 2;
       const source = fromVideo ? video : still.complete && still.naturalWidth ? still : null;
-      if (!source || !canvas.width || !canvas.height) return;
+      // A hidden panel (display: none on small screens) has no client size, and a stale canvas size would divide by it.
+      if (!source || !canvas.width || !canvas.height || !canvas.clientWidth) return;
       const sw = fromVideo ? video.videoWidth : still.naturalWidth;
       const sh = fromVideo ? video.videoHeight : still.naturalHeight;
 

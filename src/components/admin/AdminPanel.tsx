@@ -540,7 +540,7 @@ function ServersTab({ onChannels }: { onChannels: (s: { id: string; name: string
               <TableRow key={s.id}>
                 <TableCell>
                   <div className="flex min-w-40 items-center gap-3">
-                    <ServerAvatar name={s.name} className="size-9 rounded-xl text-sm" />
+                    <ServerAvatar name={s.name} icon={s.icon} className="size-9 rounded-xl text-sm" />
                     <div className="min-w-0 leading-6">
                       <p className="truncate font-medium">{s.name}</p>
                       <p className="flex items-center gap-1.5 text-xs text-muted">

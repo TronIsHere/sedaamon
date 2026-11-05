@@ -55,10 +55,12 @@ export const toMember = (m: MemberDoc, user: UserDoc): MemberDTO => ({
   badges: badgesOf(m),
 });
 
+export const serverIconUrl = (serverId: string, at: Date | null | undefined) => (at ? `/api/servers/${serverId}/icon?v=${at.getTime()}` : null);
+
 export const toServer = (
-  s: { _id: Types.ObjectId; name: string; inviteCode: string },
+  s: { _id: Types.ObjectId; name: string; inviteCode: string; iconAt?: Date | null },
   standing: Standing,
-): ServerDTO => ({ id: String(s._id), name: s.name, inviteCode: s.inviteCode, standing });
+): ServerDTO => ({ id: String(s._id), name: s.name, inviteCode: s.inviteCode, icon: serverIconUrl(String(s._id), s.iconAt), standing });
 
 export const toCategory = (c: { _id: Types.ObjectId; server: Types.ObjectId; name: string; position: number }): CategoryDTO => ({
   id: String(c._id),

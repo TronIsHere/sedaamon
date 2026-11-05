@@ -46,3 +46,6 @@ next-env.d.ts
 
 # Uploaded files when no S3 bucket is configured
 /uploads
+
+# Claude Code worktrees (each is its own checkout)
+/.claude/worktrees/

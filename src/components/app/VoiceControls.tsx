@@ -6,7 +6,7 @@ import { AudioPresets, Track } from "livekit-client";
 import { Film, Gauge, HeadphoneOff, Headphones, Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
 import { cn } from "@/lib/format";
 import { canShareScreenAudio, micErrorMessage } from "@/lib/voice";
-import type { VoiceSettings } from "./App";
+import type { VoiceSettings } from "./useVoice";
 import { useWatch } from "./WatchTogether";
 
 /** Mic and deafen toggles plus error reporting, shared by the full controls and the mobile voice bar. */

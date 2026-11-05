@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { BrandMark } from "@/components/BrandMark";
 import {
   CalendarDays,
   Check,
@@ -191,12 +192,7 @@ function HubScene() {
         )}
       </svg>
       <span className="relative grid size-20 place-items-center rounded-3xl bg-(--raised) shadow-2xl ring-1 ring-white/10">
-        <svg viewBox="0 0 512 512" className="size-11">
-          <rect width="512" height="512" rx="140" fill="#e6f7a3" />
-          <g stroke="#0b0b0b" strokeWidth="40" strokeLinecap="round">
-            <path d="M136 226v60M196 176v160M256 116v280M316 196v120M376 156v200" />
-          </g>
-        </svg>
+        <BrandMark className="size-11" radius={140} />
         <span className="landing-speaking absolute inset-0 rounded-3xl" />
       </span>
     </div>

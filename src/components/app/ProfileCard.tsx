@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Clock, Loader2, MessageCircle, Server, UserCheck, UserMinus, UserPlus, UserX, Volume2, VolumeX } from "lucide-react";
+import { Ban, Clock, Loader2, MessageCircle, Server, UserCheck, UserMinus, UserPlus, UserX, Volume2, VolumeX } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn, formatDate, formatLastSeen } from "@/lib/format";
 import { can, canManageRole, canModerate, isMuted, outranks, standingOf, type Standing } from "@/lib/permissions";
@@ -56,7 +56,8 @@ export default function ProfileCard({
   const [profile, setProfile] = useState<ProfileDTO | null>(null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [confirm, setConfirm] = useState<"kick" | "unfriend" | null>(null);
+  const [confirm, setConfirm] = useState<"kick" | "ban" | "unfriend" | null>(null);
+  const [banReason, setBanReason] = useState("");
   const [muteMinutes, setMuteMinutes] = useState(MUTE_OPTIONS[1].minutes);
 
   const load = useCallback(
@@ -348,6 +349,40 @@ export default function ProfileCard({
                       اخراج از سرور
                     </button>
                   )}
+
+                  {confirm === "ban" ? (
+                    <ConfirmRow
+                      label={`${profile.name} مسدود شود؟ از سرور بیرون می‌رود و تا وقتی مسدود است نمی‌تواند برگردد.`}
+                      action="مسدود کردن"
+                      busy={busy}
+                      onConfirm={() =>
+                        run(
+                          () => api(`/api/servers/${serverId}/bans`, { body: { userId, reason: banReason } }),
+                          () => {
+                            onNotify(`${profile.name} مسدود شد`);
+                            onClose();
+                          },
+                        )
+                      }
+                      onCancel={() => setConfirm(null)}
+                    >
+                      <input
+                        value={banReason}
+                        onChange={(e) => setBanReason(e.target.value)}
+                        maxLength={200}
+                        placeholder="دلیل (اختیاری، فقط مدیران می‌بینند)"
+                        className="mb-2 w-full rounded-xl bg-ink-800 px-3 py-2 text-sm outline-none placeholder:text-muted focus:ring-2 focus:ring-accent/60"
+                      />
+                    </ConfirmRow>
+                  ) : (
+                    <button
+                      onClick={() => setConfirm("ban")}
+                      className={cn(buttonClass, "text-danger hover:bg-danger/10")}
+                    >
+                      <Ban className="size-4" />
+                      مسدود کردن
+                    </button>
+                  )}
                 </>
               )}
             </section>
@@ -364,16 +399,20 @@ function ConfirmRow({
   busy,
   onConfirm,
   onCancel,
+  children,
 }: {
   label: string;
   action: string;
   busy: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  /** Extra fields between the question and the buttons. */
+  children?: React.ReactNode;
 }) {
   return (
     <div className="rounded-xl bg-danger/10 p-3">
-      <p className="mb-2 text-sm">{label}</p>
+      <p className="mb-2 text-sm leading-6">{label}</p>
+      {children}
       <div className="grid grid-cols-2 gap-2">
         <button disabled={busy} onClick={onConfirm} className={cn(buttonClass, "bg-danger-strong text-white hover:bg-danger-strong/90")}>
           {action}

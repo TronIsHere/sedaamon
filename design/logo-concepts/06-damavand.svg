@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <rect width="200" height="200" fill="#f4f2ec"/>
+  <polygon points="100,38 170,158 30,158" fill="#0b0b0b" stroke="#0b0b0b" stroke-width="10" stroke-linejoin="round"/>
+  <polygon points="100,38 121,74 110,68 100,80 90,68 79,74" fill="#e2f592" stroke="#e2f592" stroke-width="6" stroke-linejoin="round"/>
+  <g stroke="#f4f2ec" stroke-width="9" fill="none">
+    <path d="M78 170 V158 A22 22 0 0 1 122 158 V170"/>
+    <path d="M60 170 V158 A40 40 0 0 1 140 158 V170"/>
+    <path d="M44 170 V158 A56 56 0 0 1 156 158 V170"/>
+  </g>
+  <path d="M90 170 V158 A10 10 0 0 1 110 158 V170 Z" fill="#f4f2ec"/>
+</svg>

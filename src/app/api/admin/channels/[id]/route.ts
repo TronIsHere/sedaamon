@@ -15,7 +15,7 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
   if (name.length < 1 || name.length > 32) throw new HttpError(400, "نام کانال باید بین ۱ تا ۳۲ حرف باشد");
   const before = await Channel.findById(id).lean();
   if (!before) throw new HttpError(404, "کانال پیدا نشد");
-  const after = await Channel.findByIdAndUpdate(id, { name }, { new: true }).lean();
+  const after = await Channel.findByIdAndUpdate(id, { name }, { returnDocument: "after" }).lean();
   await broadcastChannelChange(before, after!);
   return { ok: true };
 });

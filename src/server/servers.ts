@@ -5,15 +5,16 @@ import { foldForSearch, matchesSearch } from "@/lib/search";
 import { NO_STANDING } from "@/lib/permissions";
 import type { DiscoverDTO, DiscoverySettingsDTO, MemberDTO, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
 import { memberCanView } from "./access";
+import { isBanned } from "./bans";
 import { listEvents } from "./events";
 import { filesOfChannels, releaseFiles } from "./files";
 import { announceJoin } from "./presence";
 import { HttpError, requireMember } from "./http";
 import { closeVoiceRooms } from "./livekit";
-import { Category, Channel, Event, Member, Message, Server, ServerRole, User } from "./models";
+import { Category, Channel, Event, Member, Message, Server, ServerBan, ServerIcon, ServerRole, User } from "./models";
 import { clearVoiceChannel, emitToServer, onlineAmong, realtime, serverRoom, subscribeUserToServer, voiceSnapshot } from "./realtime";
 import { createDefaultRoles, memberStanding, rolesByServer, serverRoles } from "./roles";
-import { toCategory, toChannel, toMember, toServer } from "./serialize";
+import { serverIconUrl, toCategory, toChannel, toMember, toServer } from "./serialize";
 
 const newInviteCode = () => crypto.randomBytes(6).toString("base64url");
 
@@ -107,6 +108,7 @@ async function admit(server: ServerDoc, user: JoiningUser, via: "invite" | "disc
     subscribeUserToServer(String(user._id), String(server._id));
     return toServer(server, memberStanding(existing, await serverRoles(server._id)));
   }
+  if (await isBanned(server._id, user._id)) throw new HttpError(403, "شما از این سرور مسدود شده‌اید");
 
   const welcome = server.welcome;
   const welcomeOn = !!welcome?.enabled;
@@ -171,6 +173,7 @@ export async function listDiscover(
     servers: shown.map((s) => ({
       id: String(s._id),
       name: s.name,
+      icon: serverIconUrl(String(s._id), s.iconAt),
       description: s.description ?? "",
       category: s.category ?? "other",
       tags: s.tags ?? [],
@@ -252,13 +255,24 @@ export async function acceptWelcome(serverId: string, userId: Types.ObjectId, ac
   emitToServer(serverId, "member:update", { serverId, member: toMember(member.toObject(), user!) });
 }
 
-/** Tell everyone in the server that its name or invite link changed. */
-function broadcastServer(server: { _id: Types.ObjectId; name: string; inviteCode: string }) {
-  emitToServer(String(server._id), "server:update", { id: String(server._id), name: server.name, inviteCode: server.inviteCode });
+/** Tell everyone in the server that its name, picture or invite link changed. */
+function broadcastServer(server: { _id: Types.ObjectId; name: string; inviteCode: string; iconAt?: Date | null }) {
+  const id = String(server._id);
+  emitToServer(id, "server:update", { id, name: server.name, inviteCode: server.inviteCode, icon: serverIconUrl(id, server.iconAt) });
 }
 
 export async function renameServer(serverId: string, name: string) {
-  const server = await Server.findByIdAndUpdate(serverId, { name }, { new: true }).lean();
+  const server = await Server.findByIdAndUpdate(serverId, { name }, { returnDocument: "after" }).lean();
+  if (!server) throw new HttpError(404, "سرور پیدا نشد");
+  broadcastServer(server);
+  return server;
+}
+
+/** Replaces the server's picture, or removes it when `image` is null. */
+export async function setServerIcon(serverId: string, image: { contentType: string; data: Buffer } | null) {
+  if (image) await ServerIcon.updateOne({ server: serverId }, { server: serverId, ...image }, { upsert: true });
+  else await ServerIcon.deleteOne({ server: serverId });
+  const server = await Server.findByIdAndUpdate(serverId, { iconAt: image ? new Date() : null }, { returnDocument: "after" }).lean();
   if (!server) throw new HttpError(404, "سرور پیدا نشد");
   broadcastServer(server);
   return server;
@@ -266,7 +280,7 @@ export async function renameServer(serverId: string, name: string) {
 
 /** The old link stops working at once; people already inside are unaffected. */
 export async function renewInvite(serverId: string) {
-  const server = await Server.findByIdAndUpdate(serverId, { inviteCode: newInviteCode() }, { new: true }).lean();
+  const server = await Server.findByIdAndUpdate(serverId, { inviteCode: newInviteCode() }, { returnDocument: "after" }).lean();
   if (!server) throw new HttpError(404, "سرور پیدا نشد");
   broadcastServer(server);
   return server;
@@ -289,7 +303,7 @@ export async function transferOwnership(serverId: string, currentOwner: Types.Ob
   const previous = await Member.findOneAndUpdate(
     { server: serverId, user: currentOwner },
     { owner: false, ...(top && { $addToSet: { roles: top._id } }) },
-    { new: true },
+    { returnDocument: "after" },
   );
 
   const users = await User.find({ _id: { $in: [target.user, currentOwner] } }).lean();
@@ -323,6 +337,8 @@ export async function deleteServer(serverId: string) {
     Event.deleteMany({ server: serverId }),
     ServerRole.deleteMany({ server: serverId }),
     Category.deleteMany({ server: serverId }),
+    ServerIcon.deleteOne({ server: serverId }),
+    ServerBan.deleteMany({ server: serverId }),
   ]);
   await Server.deleteOne({ _id: serverId });
   void releaseFiles(files);

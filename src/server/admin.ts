@@ -22,7 +22,7 @@ import {
   User,
 } from "./models";
 import { clearVoiceChannel, emitToAudience, emitToServer, isOnline, realtime, serverRoom, userRoom } from "./realtime";
-import { avatarUrl } from "./serialize";
+import { avatarUrl, serverIconUrl } from "./serialize";
 import { deleteServer } from "./servers";
 
 const PAGE = 50;
@@ -158,6 +158,7 @@ export async function listServersForAdmin(q: string): Promise<AdminServerDTO[]> 
     return {
       id: String(s._id),
       name: s.name,
+      icon: serverIconUrl(String(s._id), s.iconAt),
       inviteCode: s.inviteCode,
       isPublic: !!s.isPublic,
       category: s.category ?? "other",

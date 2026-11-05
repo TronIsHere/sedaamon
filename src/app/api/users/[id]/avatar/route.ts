@@ -1,4 +1,5 @@
 import { assertId, handle, HttpError, requireUser } from "@/server/http";
+import { imageResponse } from "@/server/images";
 import { Avatar } from "@/server/models";
 
 /**
@@ -10,14 +11,5 @@ export const GET = handle(async (_req, ctx: RouteContext<"/api/users/[id]/avatar
   const { id } = await ctx.params;
   const avatar = await Avatar.findOne({ user: assertId(id) }).lean();
   if (!avatar) throw new HttpError(404, "تصویری ندارد");
-  // lean() hands back the driver's Binary wrapper rather than a Buffer; its .buffer holds the bytes.
-  const stored = avatar.data as Buffer | { buffer: Uint8Array };
-  const bytes = Buffer.isBuffer(stored) ? stored : Buffer.from(stored.buffer);
-  return new Response(new Uint8Array(bytes), {
-    headers: {
-      "Content-Type": avatar.contentType,
-      "Cache-Control": "private, max-age=31536000, immutable",
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
+  return imageResponse(avatar);
 });

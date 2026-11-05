@@ -126,7 +126,7 @@ export default function DiscoverDialog({
       <ul className="mt-3 space-y-2">
         {servers.map((s) => (
           <li key={s.id} className="flex gap-3 rounded-2xl bg-ink-850 p-3 ring-1 ring-line">
-            <ServerAvatar name={s.name} className="size-14 rounded-2xl text-xl" />
+            <ServerAvatar name={s.name} icon={s.icon} className="size-14 rounded-2xl text-xl" />
             <div className="min-w-0 flex-1">
               <div className="flex items-start gap-2">
                 <div className="min-w-0 flex-1 leading-6">

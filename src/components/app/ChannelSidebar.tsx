@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParticipants } from "@livekit/components-react";
-import { CalendarClock, ChevronDown, FolderPlus, Hash, Link2, Loader2, Lock, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
+import { Bell, BellOff, CalendarClock, ChevronDown, FolderPlus, Hash, Link2, Loader2, Lock, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { can } from "@/lib/permissions";
@@ -10,14 +10,26 @@ import { toPersianDigits } from "@/lib/phone";
 import { foldForSearch, matchesSearch } from "@/lib/search";
 import { statusLine } from "@/lib/status";
 import { formatAgo } from "@/lib/format";
-import type { ChannelDTO, ChannelType, DmDTO, MeDTO, ServerDetailDTO, VoiceStates } from "@/lib/types";
+import type { NotifySettings, EffectiveNotify } from "@/lib/notify";
+import type { ChannelDTO, ChannelType, DmDTO, MeDTO, NotifySettingDTO, ServerDetailDTO, VoiceStates } from "@/lib/types";
 import { formatEventWhen, isRunning, useNow } from "./EventsDialog";
-import type { Unread, VoiceConnection, VoiceSettings } from "./App";
+import type { Unread } from "./useReadState";
+import type { VoiceConnection, VoiceSettings } from "./useVoice";
 import Skeleton from "@/components/ui/skeleton";
 import Avatar from "./Avatar";
+import NotifyMenu from "./NotifyMenu";
 import ProfileMenu from "./ProfileMenu";
 import { Badge } from "./ServerRail";
+import type { NotifyChange } from "./useNotifySettings";
 import VoiceControls from "./VoiceControls";
+
+/** Your mute and notification choices, and "mark as read", for the server menu and the channel list. */
+export interface SidebarNotify {
+  settings: NotifySettings;
+  effective: (channelId: string, serverId: string | null) => EffectiveNotify;
+  change: (target: string, scope: NotifySettingDTO["scope"], change: NotifyChange) => Promise<void>;
+  markServerRead: (serverId: string) => Promise<void>;
+}
 
 /** What the sidebar shows instead of channels while the direct messages are open. */
 export interface DmSidebarProps {
@@ -35,6 +47,7 @@ export default function ChannelSidebar({
   activeChannelId,
   voiceStates,
   unread,
+  notify,
   connection,
   joiningId,
   settings,
@@ -53,6 +66,7 @@ export default function ChannelSidebar({
   activeChannelId: string | null;
   voiceStates: VoiceStates;
   unread: Unread;
+  notify: SidebarNotify;
   connection: VoiceConnection | null;
   joiningId: string | null;
   settings: VoiceSettings;
@@ -96,10 +110,13 @@ export default function ChannelSidebar({
     if (c.type === "text") {
       const count = c.id === activeChannelId ? 0 : (unread[c.id]?.count ?? 0);
       const pinged = c.id === activeChannelId ? 0 : (unread[c.id]?.mentions ?? 0);
+      // Only the channel's own mute is shown here; a muted server says so in its menu.
+      const muted = notify.effective(c.id, null).muted;
       return (
-        <ChannelButton key={c.id} active={c.id === activeChannelId} onClick={() => onSelect(c)}>
+        <ChannelButton key={c.id} active={c.id === activeChannelId} onClick={() => onSelect(c)} className={cn(muted && c.id !== activeChannelId && "opacity-55")}>
           {c.isPrivate ? <Lock className="size-4 shrink-0 opacity-70" aria-label="کانال خصوصی" /> : <Hash className="size-4 shrink-0 opacity-70" />}
           <span className={cn("truncate", count > 0 && "font-semibold text-fg")}>{c.name}</span>
+          {muted && <BellOff className="size-3.5 shrink-0 opacity-70" aria-label="بی‌صدا" />}
           {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="ms-auto" />}
         </ChannelButton>
       );
@@ -160,11 +177,32 @@ export default function ChannelSidebar({
           </button>
         )}
         {!dm && detail && (
+          <NotifyMenu
+            title={`اعلان‌های ${detail.server.name}`}
+            scope="server"
+            setting={notify.settings[detail.server.id]}
+            onChange={(change) => notify.change(detail.server.id, "server", change)}
+            onMarkRead={() => notify.markServerRead(detail.server.id)}
+            onNotify={onNotify}
+          >
+            {(trigger) => (
+              <button
+                {...trigger}
+                title="اعلان‌ها و خواندن همه"
+                aria-label="اعلان‌ها و خواندن همه"
+                className="ms-auto grid size-10 shrink-0 place-items-center rounded-full bg-ink-900 text-fg transition-colors hover:bg-ink-800 active:bg-ink-700"
+              >
+                {notify.effective(detail.server.id, detail.server.id).muted ? <BellOff className="size-[18px] text-amber-300" /> : <Bell className="size-[18px]" />}
+              </button>
+            )}
+          </NotifyMenu>
+        )}
+        {!dm && detail && (
           <button
             onClick={() => shareInvite(detail.server, onNotify)}
             title="لینک دعوت"
             aria-label="لینک دعوت"
-            className="ms-auto grid size-10 shrink-0 place-items-center rounded-full bg-ink-900 text-fg transition-colors hover:bg-ink-800 active:bg-ink-700"
+            className="grid size-10 shrink-0 place-items-center rounded-full bg-ink-900 text-fg transition-colors hover:bg-ink-800 active:bg-ink-700"
           >
             <Link2 className="size-[18px]" />
           </button>
@@ -187,7 +225,7 @@ export default function ChannelSidebar({
 
       <div className="scrollbar-thin min-h-0 flex-1 space-y-2 overflow-y-auto">
         {dm ? (
-          <DmList dm={dm} conversations={dm.conversations.filter(dmMatches)} unread={unread} searching={!!q} />
+          <DmList dm={dm} conversations={dm.conversations.filter(dmMatches)} unread={unread} isMuted={(id) => notify.effective(id, null).muted} searching={!!q} />
         ) : !detail ? (
           <SidebarSkeleton />
         ) : (
@@ -315,11 +353,13 @@ function DmList({
   dm,
   conversations,
   unread,
+  isMuted,
   searching,
 }: {
   dm: DmSidebarProps;
   conversations: DmDTO[];
   unread: Unread;
+  isMuted: (conversationId: string) => boolean;
   searching: boolean;
 }) {
   if (!conversations.length) {
@@ -355,6 +395,7 @@ function DmList({
                   </span>
                 )}
               </span>
+              {isMuted(c.id) && <BellOff className="size-3.5 shrink-0 text-muted" aria-label="بی‌صدا" />}
               {count > 0 && <Badge count={count} className="ms-auto" />}
             </ChannelButton>
           </li>
@@ -452,11 +493,13 @@ function ChannelButton({
   active,
   card,
   onClick,
+  className,
   children,
 }: {
   active: boolean;
   card?: boolean;
   onClick: () => void;
+  className?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -469,6 +512,7 @@ function ChannelButton({
         active
           ? "bg-ink-700 font-semibold text-fg"
           : cn("text-fg/80 hover:bg-ink-800 hover:text-fg active:bg-ink-700", card && "bg-ink-900"),
+        className,
       )}
     >
       {children}

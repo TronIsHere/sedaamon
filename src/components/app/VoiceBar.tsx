@@ -2,7 +2,7 @@
 
 import { Mic, MicOff, PhoneOff, Signal } from "lucide-react";
 import { cn } from "@/lib/format";
-import type { VoiceConnection, VoiceSettings } from "./App";
+import type { VoiceConnection, VoiceSettings } from "./useVoice";
 import { ControlButton, useVoiceToggles } from "./VoiceControls";
 
 /** Phones only: keeps the active voice call visible (and mutable) while browsing text channels. */

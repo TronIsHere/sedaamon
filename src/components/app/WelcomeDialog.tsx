@@ -46,7 +46,7 @@ export default function WelcomeDialog({
     <Modal title="خوش آمدید" onClose={onClose}>
       <form onSubmit={submit} className="space-y-5">
         <div className="flex flex-col items-center text-center">
-          <ServerAvatar name={server.name} className="size-20 rounded-3xl text-3xl" />
+          <ServerAvatar name={server.name} icon={server.icon} className="size-20 rounded-3xl text-3xl" />
           <h2 className="mt-3 text-xl font-bold">{welcome.title || `به ${server.name} خوش آمدید`}</h2>
           {welcome.message && (
             <p dir="auto" className="bidi-lines mt-2 text-sm leading-7 whitespace-pre-wrap break-words text-muted">

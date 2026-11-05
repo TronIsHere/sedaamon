@@ -20,7 +20,7 @@ export const PUT = handle(async (req, ctx: RouteContext<"/api/channels/[id]/mess
     throw new HttpError(400, "بیش از ۵۰ پیام را نمی‌توان سنجاق کرد");
   }
 
-  const updated = await Message.findOneAndUpdate(where, { pinnedAt: pinned ? new Date() : null }, { new: true }).lean();
+  const updated = await Message.findOneAndUpdate(where, { pinnedAt: pinned ? new Date() : null }, { returnDocument: "after" }).lean();
   if (!updated) throw new HttpError(404, "پیام پیدا نشد");
   const message = await serializeMessage(updated);
   scope.emit("message:pin", { ...message, serverId: scope.serverId });

@@ -19,6 +19,7 @@ export default async function Home({ searchParams }: PageProps<"/">) {
   // Visitors without a session see the landing page; signed-in people who never picked a name finish signing up.
   if (!user) return <Landing />;
   if (!user.name) redirect("/login");
+  if (user.onboardingPending) redirect("/onboarding");
 
   const { server } = await searchParams;
   const servers = await listServers(user._id);

@@ -1,14 +1,16 @@
 "use client";
 
-import { useState } from "react";
-import { Crown, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
+import { Camera, Crown, Link2, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
+import { PICTURE_HINT, resizeToAvatar } from "@/lib/image";
 import { shareInvite } from "@/lib/invite";
 import { can } from "@/lib/permissions";
 import type { ChannelDTO, DiscoverySettingsDTO, MemberDTO, RoleDTO, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
-import Avatar from "./Avatar";
+import Avatar, { ServerAvatar } from "./Avatar";
 import { inputClass, Modal, SubmitButton, useSubmit } from "./Dialogs";
+import BansSettings from "./BansSettings";
 import RolesSettings from "./RolesSettings";
 import { DiscoverySettings, WelcomeSettings } from "./ServerOnboardingSettings";
 
@@ -20,10 +22,11 @@ const TABS = [
   { id: "roles", label: "نقش‌ها", permission: "role:manage" },
   { id: "discovery", label: "کاوش", permission: "server:manage" },
   { id: "welcome", label: "خوش‌آمدگویی", permission: "server:manage" },
+  { id: "bans", label: "مسدودها", permission: "member:moderate" },
 ] as const;
 
 /**
- * Rename the server, renew its invite link, give it to someone else or delete it; list it in the public directory;
+ * Rename the server or change its picture, renew its invite link, give it to someone else or delete it; list it in the public directory;
  * and set up what newcomers see. Owners and admins see everything except ownership, which belongs to the owner alone.
  */
 export default function ServerSettingsDialog({
@@ -55,6 +58,8 @@ export default function ServerSettingsDialog({
   const tabs = TABS.filter((t) => can(server.standing, t.permission));
   const [name, setName] = useState(server.name);
   const [renewing, setRenewing] = useState(false);
+  const [iconBusy, setIconBusy] = useState(false);
+  const iconInput = useRef<HTMLInputElement>(null);
   const [confirmRenew, setConfirmRenew] = useState(false);
   const [panel, setPanel] = useState<"transfer" | "delete" | null>(null);
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>(tabs[0]?.id ?? "general");
@@ -67,6 +72,36 @@ export default function ServerSettingsDialog({
       onClose();
     },
   );
+
+  const changeIcon = async (file: File | undefined) => {
+    if (!file) return;
+    setIconBusy(true);
+    try {
+      const body = await resizeToAvatar(file);
+      const res = await fetch(`/api/servers/${server.id}/icon`, { method: "POST", body, headers: { "Content-Type": body.type } });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "بارگذاری تصویر ممکن نشد");
+      onChanged(data);
+      onNotify("تصویر سرور تغییر کرد");
+    } catch (err) {
+      onNotify(err instanceof DOMException ? "این فایل تصویر معتبری نیست" : (err as Error).message);
+    } finally {
+      setIconBusy(false);
+      if (iconInput.current) iconInput.current.value = "";
+    }
+  };
+
+  const removeIcon = async () => {
+    setIconBusy(true);
+    try {
+      onChanged(await api<ServerDetailDTO>(`/api/servers/${server.id}/icon`, { method: "DELETE" }));
+      onNotify("تصویر سرور حذف شد");
+    } catch (err) {
+      onNotify((err as Error).message);
+    } finally {
+      setIconBusy(false);
+    }
+  };
 
   const renew = async () => {
     setRenewing(true);
@@ -85,9 +120,9 @@ export default function ServerSettingsDialog({
 
   return (
     <Modal title="تنظیمات سرور" onClose={onClose}>
-      <div role="tablist" className="mb-4 flex gap-1 rounded-full bg-ink-850 p-1 text-sm">
+      <div role="tablist" className="mb-4 flex gap-1 overflow-x-auto rounded-full bg-ink-850 p-1 text-sm [scrollbar-width:none]">
         {tabs.map((t) => (
-          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={cn("flex-1 rounded-full py-2 sm:py-1.5", tab === t.id ? "bg-accent-strong text-on-accent" : "text-muted hover:text-fg")}>
+          <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)} className={cn("flex-1 shrink-0 rounded-full px-3 py-2 whitespace-nowrap sm:py-1.5", tab === t.id ? "bg-accent-strong text-on-accent" : "text-muted hover:text-fg")}>
             {t.label}
           </button>
         ))}
@@ -95,10 +130,53 @@ export default function ServerSettingsDialog({
 
       {tab === "discovery" && <DiscoverySettings server={server} value={discovery} onChanged={onChanged} onNotify={onNotify} />}
       {tab === "roles" && <RolesSettings server={server} roles={roles} members={members} onNotify={onNotify} />}
+      {tab === "bans" && <BansSettings server={server} onNotify={onNotify} />}
       {tab === "welcome" && <WelcomeSettings server={server} value={welcome} channels={channels} onChanged={onChanged} onNotify={onNotify} />}
 
       {tab === "general" && (
       <>
+      <div className="mb-5 flex items-center gap-4 rounded-2xl bg-ink-850 p-4 ring-1 ring-line">
+        <div className="relative">
+          <ServerAvatar name={name || server.name} icon={server.icon} className="size-20 rounded-full text-3xl" />
+          {iconBusy && (
+            <span className="absolute inset-0 grid place-items-center rounded-full bg-black/60">
+              <Loader2 className="size-6 animate-spin" />
+            </span>
+          )}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-lg font-bold">{name.trim() || server.name}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input
+              ref={iconInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className="sr-only"
+              onChange={(e) => changeIcon(e.target.files?.[0])}
+            />
+            <button
+              type="button"
+              disabled={iconBusy}
+              onClick={() => iconInput.current?.click()}
+              className="flex items-center gap-1.5 rounded-full bg-ink-800 px-3 py-1.5 text-xs font-semibold hover:bg-ink-700 disabled:opacity-60"
+            >
+              <Camera className="size-3.5" />
+              {server.icon ? "تغییر تصویر" : "افزودن تصویر"}
+            </button>
+            {server.icon && (
+              <button
+                type="button"
+                disabled={iconBusy}
+                onClick={removeIcon}
+                className="rounded-full px-3 py-1.5 text-xs text-muted hover:text-danger disabled:opacity-60"
+              >
+                حذف
+              </button>
+            )}
+          </div>
+          <p className="mt-1.5 text-[11px] text-muted">{PICTURE_HINT}</p>
+        </div>
+      </div>
       <form onSubmit={rename.submit} className="space-y-4">
         <label className="block space-y-1.5">
           <span className="text-sm text-muted">نام سرور</span>

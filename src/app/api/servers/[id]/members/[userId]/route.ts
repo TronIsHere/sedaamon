@@ -1,9 +1,10 @@
 import { z } from "zod";
 import { canManageRole, canModerate, can, outranks } from "@/lib/permissions";
+import { removeMember } from "@/server/bans";
 import { revokeVoiceAccess } from "@/server/channels";
 import { assertId, handle, HttpError, requireMember, requireUser } from "@/server/http";
 import { Member, User } from "@/server/models";
-import { emitToServer, realtime, serverRoom, userRoom } from "@/server/realtime";
+import { emitToServer } from "@/server/realtime";
 import { memberStanding, serverRoles } from "@/server/roles";
 import { toMember } from "@/server/serialize";
 
@@ -73,11 +74,6 @@ export const DELETE = handle(async (_req, ctx: Ctx) => {
     throw new HttpError(403, "نمی‌توانید این عضو را اخراج کنید");
   }
 
-  await Member.deleteOne({ _id: target._id });
-  emitToServer(id, "member:remove", { serverId: id, userId });
-  // The removed user's sockets stop receiving this server's events and learn they're out.
-  const sockets = realtime.io?.in(userRoom(userId));
-  sockets?.socketsLeave(serverRoom(id));
-  sockets?.emit("server:removed", { serverId: id, kicked: !leaving });
+  await removeMember(id, String(target.user), leaving ? "left" : "kicked");
   return { ok: true };
 });

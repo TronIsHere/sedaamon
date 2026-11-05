@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import JoinInvite from "@/components/JoinInvite";
 import { currentUser } from "@/server/http";
 import { Member } from "@/server/models";
+import { serverIconUrl } from "@/server/serialize";
 import { findServerByInvite } from "@/server/servers";
 
 // Invite links are private to whoever received them.
@@ -21,7 +22,7 @@ export default async function InvitePage({ params }: PageProps<"/invite/[code]">
 
   return (
     <main className="grid bg-ink-950 min-h-full place-items-center px-4 pt-[max(1rem,env(safe-area-inset-top))] pb-safe-4">
-      <JoinInvite code={code} server={server ? { name: server.name, memberCount } : null} />
+      <JoinInvite code={code} server={server ? { name: server.name, icon: serverIconUrl(String(server._id), server.iconAt), memberCount } : null} />
     </main>
   );
 }

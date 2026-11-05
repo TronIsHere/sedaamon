@@ -15,6 +15,7 @@ import {
   Users,
 } from "lucide-react";
 import { FAQ, FEATURES, SITE, SITE_URL, STEPS, jsonLd } from "@/lib/site";
+import { BrandMark } from "@/components/BrandMark";
 import AppMockup from "./AppMockup";
 import Benefits from "./Benefits";
 import "./landing.css";
@@ -180,17 +181,6 @@ function StructuredData() {
 
 /* ---- Pieces ----------------------------------------------------------------------------------- */
 
-function LogoMark({ className = "" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 512 512" className={className} aria-hidden>
-      <rect width="512" height="512" rx="112" fill="#e6f7a3" />
-      <g stroke="#0b0b0b" strokeWidth="40" strokeLinecap="round">
-        <path d="M136 226v60M196 176v160M256 116v280M316 196v120M376 156v200" />
-      </g>
-    </svg>
-  );
-}
-
 function Logo() {
   return (
     <Link
@@ -198,7 +188,7 @@ function Logo() {
       className="flex items-center gap-2 rounded-lg"
       aria-label="صدامون"
     >
-      <LogoMark className="size-8" />
+      <BrandMark className="size-8" />
       <span className="text-xl font-extrabold">صدامون</span>
     </Link>
   );
@@ -445,7 +435,7 @@ function Statement() {
   return (
     <section className="px-4 pt-28 sm:px-6 sm:pt-40">
       <figure className="mx-auto max-w-4xl text-center">
-        <LogoMark className="mx-auto mb-8 size-12" />
+        <BrandMark className="mx-auto mb-8 size-12" />
         <blockquote
           className={`landing-statement text-2xl leading-[1.7] font-medium text-balance sm:text-4xl lg:text-5xl lg:leading-[1.6]`}
         >

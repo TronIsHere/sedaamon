@@ -27,7 +27,7 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
     update.bio = bio;
   }
   if (Object.keys(update).length) {
-    const updated = await User.findByIdAndUpdate(id, update, { new: true }).lean();
+    const updated = await User.findByIdAndUpdate(id, update, { returnDocument: "after" }).lean();
     if (!updated) throw new HttpError(404, "کاربر پیدا نشد");
     void emitUserUpdate(toUser(updated));
   }

@@ -7,13 +7,14 @@ import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { toPersianDigits } from "@/lib/phone";
 import type { ServerDTO } from "@/lib/types";
+import { ServerAvatar } from "@/components/app/Avatar";
 
 export default function JoinInvite({
   code,
   server,
 }: {
   code: string;
-  server: { name: string; memberCount: number } | null;
+  server: { name: string; icon: string | null; memberCount: number } | null;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -35,9 +36,7 @@ export default function JoinInvite({
     <div className="w-full max-w-sm animate-pop-in rounded-[2rem] bg-ink-900 p-7 text-center">
       {server ? (
         <>
-          <span className="mx-auto mb-4 grid size-16 place-items-center rounded-full bg-accent-strong text-2xl font-bold text-on-accent">
-            {server.name.trim()[0]}
-          </span>
+          <ServerAvatar name={server.name} icon={server.icon} className="mx-auto mb-4 size-16 rounded-full text-2xl" />
           <p className="text-sm text-muted">به این سرور دعوت شده‌اید</p>
           <h1 className="mt-1 text-xl font-bold">{server.name}</h1>
           <p className="mt-1 text-sm text-muted">{toPersianDigits(server.memberCount)} عضو</p>

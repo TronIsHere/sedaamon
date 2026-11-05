@@ -6,7 +6,7 @@ export type Permission =
   | "message:delete_any" // delete other people's messages
   | "member:moderate" // mute and kick members ranked below you
   | "role:manage" // create, edit and hand out the roles below your own
-  | "server:manage" // rename the server and renew its invite link
+  | "server:manage" // rename the server, change its picture and renew its invite link
   | "server:own" // transfer or delete the server; only ever the owner's, never part of a role
   | "event:manage" // schedule, edit and cancel events
   | "message:mention_everyone" // ping the whole server with @everyone
@@ -28,7 +28,7 @@ export const ROLE_PERMISSIONS = [
 export type RolePermission = (typeof ROLE_PERMISSIONS)[number];
 
 export const PERMISSION_INFO: Record<RolePermission, { label: string; hint: string }> = {
-  "server:manage": { label: "مدیریت سرور", hint: "تغییر نام، لینک دعوت، فهرست عمومی و خوش‌آمدگویی" },
+  "server:manage": { label: "مدیریت سرور", hint: "تغییر نام و تصویر، لینک دعوت، فهرست عمومی و خوش‌آمدگویی" },
   "role:manage": { label: "مدیریت نقش‌ها", hint: "ساختن و ویرایش نقش‌های پایین‌تر و دادن آن‌ها به اعضا" },
   "channel:manage": { label: "مدیریت کانال‌ها", hint: "ساختن، ویرایش و حذف کانال‌ها و دسته‌ها" },
   "channel:view_private": { label: "دیدن کانال‌های خصوصی", hint: "ورود به همهٔ کانال‌های خصوصی" },

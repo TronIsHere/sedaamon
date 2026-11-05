@@ -88,7 +88,7 @@ export async function broadcastEvent(kind: "new" | "update", doc: EventDoc) {
 
 /** Marks one kind of alert as sent and returns the event only if this call was the one that marked it. */
 async function claim(id: Types.ObjectId, field: "remindedAt" | "startedAt") {
-  return Event.findOneAndUpdate({ _id: id, [field]: null }, { [field]: new Date() }, { new: true }).lean();
+  return Event.findOneAndUpdate({ _id: id, [field]: null }, { [field]: new Date() }, { returnDocument: "after" }).lean();
 }
 
 async function alertOnce(doc: EventDoc, kind: EventAlert["kind"]) {

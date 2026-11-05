@@ -2,18 +2,8 @@
 
 import "@livekit/components-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { RoomAudioRenderer, RoomContext, useAudioPlayback } from "@livekit/components-react";
-import {
-  DisconnectReason,
-  LocalAudioTrack,
-  Room,
-  RoomEvent,
-  Track,
-  VideoQuality,
-  type RemoteParticipant,
-  type RemoteTrackPublication,
-} from "livekit-client";
-import { Bell, Compass, Hash, Lock, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
+import { RoomAudioRenderer, RoomContext } from "@livekit/components-react";
+import { Bell, BellOff, BellRing, Compass, Hash, Lock, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { messageSummary } from "@/lib/attachments";
 import { cn } from "@/lib/format";
@@ -21,18 +11,11 @@ import { can, isMuted, standingOf } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { useCloseOnBack, useSwipe } from "@/lib/mobile";
 import { pingsUser } from "@/lib/mentions";
+import { countsUnread, shouldAlert } from "@/lib/notify";
 import { showNotification } from "@/lib/notifications";
 import { statusLine } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
 import { useToast } from "@/components/ui/toast";
-import {
-  acquireMic,
-  micErrorMessage,
-  readLowDataPref,
-  videoKey,
-  voiceUnsupportedReason,
-  writeLowDataPref,
-} from "@/lib/voice";
 import {
   DM_SCOPE,
   type CategoryDTO,
@@ -47,6 +30,7 @@ import {
   type MemberDTO,
   type NotificationDTO,
   type PresenceEvent,
+  type ReadEvent,
   type UserDTO,
   type ServerDetailDTO,
   type ServerDTO,
@@ -62,6 +46,7 @@ import EventsDialog, { formatEventWhen } from "./EventsDialog";
 import FriendsDialog from "./FriendsDialog";
 import MembersList from "./MembersList";
 import NotificationsDialog, { PING_ICON, PING_TEXT } from "./NotificationsDialog";
+import NotifyMenu from "./NotifyMenu";
 import ProfileCard from "./ProfileCard";
 import ProfileMenu from "./ProfileMenu";
 import ServerRail, { Badge } from "./ServerRail";
@@ -70,38 +55,9 @@ import VoiceBar from "./VoiceBar";
 import VoiceView from "./VoiceView";
 import WelcomeDialog from "./WelcomeDialog";
 import { WatchProvider } from "./WatchTogether";
-
-export interface VoiceConnection {
-  channelId: string;
-  serverId: string;
-  channelName: string;
-  serverName: string;
-}
-
-export interface VoiceSettings {
-  deafened: boolean;
-  lowData: boolean;
-  setDeafened: (v: boolean) => void;
-  setLowData: (v: boolean) => void;
-  /** In low-data mode, the cameras and screens (by `videoKey`) the person chose to receive anyway. */
-  allowedVideo: ReadonlySet<string>;
-  setVideoAllowed: (key: string, allowed: boolean) => void;
-}
-
-/**
- * Low-data mode receives only voices. A camera or screen (with its sound) comes through only after the person asks
- * for that one, and then capped at a lower quality: low for faces, medium for screens so text stays readable.
- */
-function applyLowData(pub: RemoteTrackPublication, identity: string, lowData: boolean, allowed: ReadonlySet<string>) {
-  const voice = pub.kind === Track.Kind.Audio && pub.source !== Track.Source.ScreenShareAudio;
-  const wanted = voice || !lowData || allowed.has(videoKey(identity, pub.source));
-  pub.setSubscribed(wanted);
-  if (wanted && pub.kind === Track.Kind.Video) {
-    pub.setVideoQuality(
-      !lowData ? VideoQuality.HIGH : pub.source === Track.Source.ScreenShare ? VideoQuality.MEDIUM : VideoQuality.LOW,
-    );
-  }
-}
+import { useNotifySettings } from "./useNotifySettings";
+import { useReadState, type Unread } from "./useReadState";
+import { useVoice } from "./useVoice";
 
 type Dialog =
   | { kind: "server" }
@@ -119,9 +75,6 @@ type Dialog =
   | { kind: "category"; categoryId: string | null }
   | null;
 
-/** channelId → unread messages that arrived while the channel wasn't on screen */
-export type Unread = Record<string, { serverId: string; count: number; /** Of those, how many ping me. */ mentions: number }>;
-
 export default function App({
   me: initialMe,
   initialServers,
@@ -137,17 +90,11 @@ export default function App({
   const [detail, setDetail] = useState<ServerDetailDTO | null>(null);
   const [activeChannelId, setActiveChannelId] = useState<string | null>(null);
   const [voiceStates, setVoiceStates] = useState<VoiceStates>({});
-  const [connection, setConnection] = useState<VoiceConnection | null>(null);
-  const [joiningId, setJoiningId] = useState<string | null>(null);
-  const [deafened, setDeafened] = useState(false);
-  const [lowData, setLowData] = useState(false);
-  const [allowedVideo, setAllowedVideo] = useState<ReadonlySet<string>>(new Set());
   const [dialog, setDialog] = useState<Dialog>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
   const [infoHidden, setInfoHidden] = useState(false);
   const [search, setSearch] = useState<string | null>(null);
-  const [unread, setUnread] = useState<Unread>({});
   /** Pings (mentions, @everyone, replies) newest first; null until the first load. */
   const [notifications, setNotifications] = useState<NotificationDTO[] | null>(null);
   /** userId → connected right now. Fed by server details, the friend list and live "presence" events. */
@@ -158,28 +105,24 @@ export default function App({
   const lastChannelByServer = useRef<Record<string, string>>({});
   /** Servers whose welcome screen was already put in front of the person in this visit. */
   const welcomeShown = useRef(new Set<string>());
-  const lowDataRef = useRef(lowData);
-  const allowedVideoRef = useRef(allowedVideo);
   const activeChannelRef = useRef(activeChannelId);
   const serversRef = useRef(servers);
   const activeServerRef = useRef(activeServerId);
   const detailRef = useRef(detail);
-  const connectionRef = useRef(connection);
   const dmsRef = useRef(dms);
   const notificationsRef = useRef(notifications);
   /** Latest openers for toast taps; the socket handlers outlive the render that made them. */
   const openFromToast = useRef<{ ping: (n: NotificationDTO) => void; dm: (userId: string) => void } | null>(null);
   const { toast, dismiss: dismissToast } = useToast();
 
-  const [room] = useState(
-    () =>
-      new Room({
-        adaptiveStream: true,
-        dynacast: true,
-        audioCaptureDefaults: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        publishDefaults: { dtx: true, red: true, simulcast: true },
-      }),
-  );
+  // Reads made here or on another device take their pings off the list too. Ids sort as text in the order they were made.
+  const onRead = useCallback((reads: ReadEvent["reads"]) => {
+    const upTo = new Map(reads.map((r) => [r.channelId, r.lastRead]));
+    setNotifications((list) => list && list.map((n) => (!n.read && n.messageId <= (upTo.get(n.channelId) ?? "") ? { ...n, read: true } : n)));
+  }, []);
+  const { unread, countMessage, markRead, markServerRead, dropServer } = useReadState({ meId: initialMe.id, onRead });
+  const notifySettings = useNotifySettings();
+  const effectiveRef = useRef(notifySettings.effective);
 
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
   const closeMembers = useCallback(() => setMembersOpen(false), []);
@@ -200,6 +143,9 @@ export default function App({
   const notify = useCallback((message: string) => {
     toast({ id: `notice:${message}`, title: message });
   }, [toast]);
+
+  const { room, connection, connectionRef, joiningId, settings, canPlayAudio, startAudio, joinVoice, leaveVoice, dropCall } = useVoice({ notify });
+  const { deafened } = settings;
 
   const refreshNotifications = useCallback(
     () =>
@@ -296,12 +242,6 @@ export default function App({
     setDialog((d) => d ?? { kind: "welcome" });
   }, [detail]);
 
-  const dropCall = useCallback(() => {
-    room.disconnect();
-    setConnection(null);
-    notify("کانال صوتی دیگر در دسترس نیست");
-  }, [room, notify]);
-
   // Live updates pushed by the server.
   useEffect(() => {
     const socket = getSocket();
@@ -354,11 +294,11 @@ export default function App({
       setDetail((d) =>
         d && d.server.id === serverId ? { ...d, members: d.members.filter((m) => m.user.id !== userId) } : d,
       );
-    const onServerUpdate = ({ id, name, inviteCode }: { id: string; name: string; inviteCode: string }) => {
-      setServers((list) => list.map((s) => (s.id === id ? { ...s, name, inviteCode } : s)));
-      setDetail((d) => (d && d.server.id === id ? { ...d, server: { ...d.server, name, inviteCode } } : d));
+    const onServerUpdate = ({ id, name, inviteCode, icon }: { id: string; name: string; inviteCode: string; icon: string | null }) => {
+      setServers((list) => list.map((s) => (s.id === id ? { ...s, name, inviteCode, icon } : s)));
+      setDetail((d) => (d && d.server.id === id ? { ...d, server: { ...d.server, name, inviteCode, icon } } : d));
     };
-    const onServerRemoved = ({ serverId, kicked, deleted }: { serverId: string; kicked: boolean; deleted?: boolean }) => {
+    const onServerRemoved = ({ serverId, kicked, banned, deleted }: { serverId: string; kicked: boolean; banned?: boolean; deleted?: boolean }) => {
       const name = serversRef.current.find((s) => s.id === serverId)?.name ?? "";
       const remaining = serversRef.current.filter((s) => s.id !== serverId);
       setServers(remaining);
@@ -369,10 +309,18 @@ export default function App({
         setActiveServerId(remaining[0]?.id);
       }
       if (connectionRef.current?.serverId === serverId) dropCall();
-      setUnread((u) => Object.fromEntries(Object.entries(u).filter(([, v]) => v.serverId !== serverId)));
+      dropServer(serverId);
       setNotifications((list) => list && list.filter((n) => n.serverId !== serverId));
       setDialog((d) => (d?.kind === "serverSettings" ? null : d));
-      notify(deleted ? `سرور «${name}» حذف شد` : kicked ? `از سرور «${name}» اخراج شدید` : `از سرور «${name}» خارج شدید`);
+      notify(
+        deleted
+          ? `سرور «${name}» حذف شد`
+          : banned
+            ? `از سرور «${name}» مسدود شدید`
+            : kicked
+              ? `از سرور «${name}» اخراج شدید`
+              : `از سرور «${name}» خارج شدید`,
+      );
     };
     const putEvent = (e: EventDTO) =>
       setDetail((d) =>
@@ -443,12 +391,16 @@ export default function App({
               .sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "")),
           );
       }
-      if (m.author.id === initialMe.id) return;
       const onScreen = m.channelId === activeChannelRef.current && document.visibilityState === "visible";
-      if (!onScreen) {
-        setUnread((u) => ({ ...u, [m.channelId]: { serverId: m.serverId, count: (u[m.channelId]?.count ?? 0) + 1, mentions: 0 } }));
+      countMessage(m, onScreen);
+      if (onScreen) markRead(m.channelId);
+      if (m.author.id === initialMe.id) return;
+      const pinged = pingsUser(m, initialMe.id);
+      // Muted places, and "mentions only" ones for anything but a ping, stay quiet.
+      const alert = shouldAlert(effectiveRef.current(m.channelId, m.serverId === DM_SCOPE ? null : m.serverId), pinged);
+      if (!onScreen && alert) {
         const serverName = serversRef.current.find((s) => s.id === m.serverId)?.name;
-        const title = pingsUser(m, initialMe.id)
+        const title = pinged
           ? `${m.author.name} شما را صدا زد${serverName ? ` (${serverName})` : ""}`
           : serverName
             ? `${m.author.name} در ${serverName}`
@@ -483,6 +435,8 @@ export default function App({
     const onPing = (n: NotificationDTO) => {
       setNotifications((list) => (list?.some((x) => x.id === n.id) ? list : [n, ...(list ?? [])]));
       if (n.channelId === activeChannelRef.current && document.visibilityState === "visible") return;
+      // A ping in a muted place is still listed and counted, just without the banner.
+      if (effectiveRef.current(n.channelId, n.serverId).muted) return;
       // Several pings from one person in one channel share a card: "3 messages from …".
       const KindIcon = PING_ICON[n.kind];
       toast({
@@ -564,7 +518,7 @@ export default function App({
       socket.off("user:update", onUserUpdate);
       socket.off("friends:changed", refreshFriends);
     };
-  }, [initialMe.id, notify, toast, dismissToast, refreshFriends, refreshDms, refreshNotifications, dropCall]);
+  }, [initialMe.id, notify, toast, dismissToast, refreshFriends, refreshDms, refreshNotifications, dropCall, connectionRef, countMessage, markRead, dropServer]);
 
   // The channel on screen is read; so is the active one again when the tab comes back to the front.
   useEffect(() => {
@@ -572,32 +526,31 @@ export default function App({
     serversRef.current = servers;
     activeServerRef.current = activeServerId;
     detailRef.current = detail;
-    connectionRef.current = connection;
     dmsRef.current = dms;
     notificationsRef.current = notifications;
-    const markRead = () => {
+    effectiveRef.current = notifySettings.effective;
+    const readActive = () => {
       const id = activeChannelRef.current;
       if (id && document.visibilityState === "visible") {
         markChannelPingsRead(id);
         dismissToast(`ch:${id}`);
-        setUnread((u) => {
-          if (!u[id]) return u;
-          const rest = { ...u };
-          delete rest[id];
-          return rest;
-        });
+        markRead(id);
       }
     };
-    markRead();
-    document.addEventListener("visibilitychange", markRead);
-    return () => document.removeEventListener("visibilitychange", markRead);
-  }, [activeChannelId, servers, activeServerId, detail, connection, dms, notifications, markChannelPingsRead, dismissToast]);
+    readActive();
+    document.addEventListener("visibilitychange", readActive);
+    return () => document.removeEventListener("visibilitychange", readActive);
+  }, [activeChannelId, servers, activeServerId, detail, dms, notifications, notifySettings.effective, markChannelPingsRead, dismissToast, markRead]);
 
-  // Unread pings come from the saved list, so they survive a reload; the live counts only know what arrived since.
-  const unreadView: Unread = { ...unread };
+  // What the badges show: pings always (they come from the saved list), other messages unless the place is muted or set to pings only.
+  const unreadView: Unread = {};
+  for (const [id, u] of Object.entries(unread)) {
+    const counted = countsUnread(notifySettings.effective(id, u.serverId === DM_SCOPE ? null : u.serverId));
+    unreadView[id] = { ...u, count: counted ? u.count : 0 };
+  }
   for (const n of notifications ?? []) {
     if (n.read) continue;
-    const entry = unreadView[n.channelId] ?? { serverId: n.serverId, count: 0, mentions: 0 };
+    const entry = unreadView[n.channelId] ?? { serverId: n.serverId, count: 0, lastRead: null, mentions: 0 };
     unreadView[n.channelId] = { ...entry, mentions: entry.mentions + 1, count: Math.max(entry.count, entry.mentions + 1) };
   }
   const unreadPings = notifications?.filter((n) => !n.read).length ?? 0;
@@ -605,128 +558,6 @@ export default function App({
   useEffect(() => {
     document.title = unreadTotal ? `(${toPersianDigits(unreadTotal)}) صدامون` : "صدامون";
   }, [unreadTotal]);
-
-  // Room lifecycle: drop the connection UI if LiveKit kicks us out or the network dies.
-  useEffect(() => {
-    const onDisconnected = (reason?: DisconnectReason) => {
-      if (reason === DisconnectReason.CLIENT_INITIATED) return;
-      setConnection(null);
-      notify("اتصال صوتی قطع شد");
-    };
-    // Catch new feeds as soon as they're announced, before much video has been spent on them.
-    const onPublished = (pub: RemoteTrackPublication, participant: RemoteParticipant) =>
-      applyLowData(pub, participant.identity, lowDataRef.current, allowedVideoRef.current);
-    const onSubscribed = (_track: unknown, pub: RemoteTrackPublication, participant: RemoteParticipant) =>
-      onPublished(pub, participant);
-    room.on(RoomEvent.Disconnected, onDisconnected);
-    room.on(RoomEvent.TrackPublished, onPublished);
-    room.on(RoomEvent.TrackSubscribed, onSubscribed);
-    return () => {
-      room.off(RoomEvent.Disconnected, onDisconnected);
-      room.off(RoomEvent.TrackPublished, onPublished);
-      room.off(RoomEvent.TrackSubscribed, onSubscribed);
-      room.disconnect();
-    };
-  }, [room, notify]);
-
-  // Low-data mode is a per-device choice; read it after hydration so server and client markup match.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setLowData(readLowDataPref());
-  }, []);
-
-  // Low-data mode: keep voices, drop video and screen sound except the feeds the person asked for.
-  useEffect(() => {
-    lowDataRef.current = lowData;
-    allowedVideoRef.current = allowedVideo;
-    for (const p of room.remoteParticipants.values()) {
-      for (const pub of p.trackPublications.values()) applyLowData(pub, p.identity, lowData, allowedVideo);
-    }
-  }, [lowData, allowedVideo, room, connection]);
-
-  const changeLowData = useCallback((on: boolean) => {
-    writeLowDataPref(on);
-    setLowData(on);
-    // Turning it back on starts from nothing let through again.
-    setAllowedVideo(new Set());
-  }, []);
-  const setVideoAllowed = useCallback((key: string, allowed: boolean) => {
-    setAllowedVideo((prev) => {
-      const next = new Set(prev);
-      if (allowed) next.add(key);
-      else next.delete(key);
-      return next;
-    });
-  }, []);
-
-  // Safari blocks sound until the page is tapped; when that happens this offers a button to turn it on.
-  const { canPlayAudio, startAudio } = useAudioPlayback(room);
-
-  const joinVoice = async (channel: ChannelDTO) => {
-    if (connection?.channelId === channel.id || joiningId) return;
-    const unsupported = voiceUnsupportedReason();
-    if (unsupported) return notify(unsupported);
-    setJoiningId(channel.id);
-
-    // Safari and phones only honour sound and the mic prompt from inside the tap itself, so start
-    // both before the first await; the token request and connection below would use up the gesture.
-    room.startAudio().catch(() => {});
-    const mic = deafened ? null : acquireMic(room.options.audioCaptureDefaults);
-
-    try {
-      const { token, url } = await api<{ token: string; url: string }>("/api/livekit/token", {
-        body: { channelId: channel.id },
-      });
-      if (room.state !== "disconnected") await room.disconnect();
-      await room.connect(url, token);
-      setAllowedVideo(new Set());
-      setConnection({
-        channelId: channel.id,
-        serverId: channel.serverId,
-        channelName: channel.name,
-        serverName: detail?.server.name ?? "",
-      });
-    } catch (err) {
-      console.error(err);
-      notify(
-        navigator.onLine === false
-          ? "اتصال اینترنت برقرار نیست"
-          : "اتصال به کانال صوتی برقرار نشد. اتصال اینترنت را بررسی کنید و دوباره تلاش کنید",
-      );
-      // Switching channels already left the old one, so don't keep showing it as connected.
-      if (room.state !== "disconnected") room.disconnect().catch(() => {});
-      setConnection(null);
-      mic?.then((t) => t instanceof LocalAudioTrack && t.stop());
-      setJoiningId(null);
-      return;
-    }
-
-    // Connected. A missing microphone only means this person listens.
-    let published = false;
-    try {
-      const track = await mic;
-      if (track instanceof LocalAudioTrack) {
-        await room.localParticipant.publishTrack(track, { source: Track.Source.Microphone });
-        published = true;
-      } else if (track) {
-        notify(micErrorMessage(track));
-      }
-    } catch (err) {
-      console.error(err);
-      notify(micErrorMessage(err));
-    } finally {
-      setJoiningId(null);
-      // Don't leave the mic (and the browser's recording indicator) on if it never got published.
-      if (!published) mic?.then((t) => t instanceof LocalAudioTrack && t.stop());
-    }
-    // An active microphone lets iOS play everyone else's audio without another tap.
-    room.startAudio().catch(() => {});
-  };
-
-  const leaveVoice = async () => {
-    await room.disconnect();
-    setConnection(null);
-  };
 
   /** Opens the channel a ping came from. */
   const openNotification = (n: NotificationDTO) => {
@@ -793,7 +624,7 @@ export default function App({
     setActiveChannelId(channel.id);
     lastChannelByServer.current[channel.serverId] = channel.id;
     setSidebarOpen(false);
-    if (channel.type === "voice" && !connection) joinVoice(channel);
+    if (channel.type === "voice" && !connection) joinVoice(channel, detail?.server.name ?? "");
   };
 
   const openConnectedChannel = () => {
@@ -824,7 +655,6 @@ export default function App({
         { user: activeDm.peer, owner: false, roles: [], mutedUntil: null, joinedAt: "", badges: [] },
       ]
     : [];
-  const settings: VoiceSettings = { deafened, lowData, setDeafened, setLowData: changeLowData, allowedVideo, setVideoAllowed };
   const inVoice = currentDetail?.channels.reduce((n, c) => n + (voiceStates[c.id]?.length ?? 0), 0) ?? 0;
 
   const firstVoice = currentDetail?.channels.find((c) => c.type === "voice");
@@ -887,6 +717,12 @@ export default function App({
               activeChannelId={activeChannelId}
               voiceStates={voiceStates}
               unread={unreadView}
+              notify={{
+                settings: notifySettings.settings,
+                effective: notifySettings.effective,
+                change: notifySettings.change,
+                markServerRead,
+              }}
               connection={connection}
               joiningId={joiningId}
               settings={settings}
@@ -974,6 +810,27 @@ export default function App({
                     </HeaderButton>
                   )}
                   {channel?.type === "text" && search === null && (
+                    <NotifyMenu
+                      title={activeDm ? `اعلان‌های گفت‌وگو با ${activeDm.peer.name}` : `اعلان‌های #${channel.name}`}
+                      scope="channel"
+                      setting={notifySettings.settings[channel.id]}
+                      server={currentDetail ? notifySettings.effective(currentDetail.server.id, currentDetail.server.id) : undefined}
+                      levels={!activeDm}
+                      onChange={(change) => notifySettings.change(channel.id, "channel", change)}
+                      onNotify={notify}
+                      align="end"
+                    >
+                      {(trigger) => {
+                        const muted = notifySettings.effective(channel.id, currentDetail?.server.id ?? null).muted;
+                        return (
+                          <button {...trigger} title="اعلان‌های این کانال" aria-label="اعلان‌های این کانال" className={headerButtonClass}>
+                            {muted ? <BellOff className="size-5 text-amber-300" /> : <BellRing className="size-5" />}
+                          </button>
+                        );
+                      }}
+                    </NotifyMenu>
+                  )}
+                  {channel?.type === "text" && search === null && (
                     <HeaderButton label="جست‌وجو در پیام‌ها" onClick={() => setSearch("")}>
                       <Search className="size-5" />
                     </HeaderButton>
@@ -1007,7 +864,7 @@ export default function App({
                       {...trigger}
                       title="وضعیت و پروفایل"
                       aria-label="وضعیت و پروفایل"
-                      className="hidden shrink-0 rounded-full transition-opacity hover:opacity-85 md:block"
+                      className="hidden shrink-0 rounded-full transition-opacity hover:opacity-85 md:flex"
                     >
                       <Avatar user={me} online />
                     </button>
@@ -1048,6 +905,7 @@ export default function App({
                   online={onlineNow}
                   dm={activeDm?.peer}
                   rulesPending={!!currentDetail?.onboarding.rulesPending}
+                  unreadFrom={unread[channel.id]?.count ? { lastRead: unread[channel.id].lastRead, count: unread[channel.id].count } : null}
                   onOpenProfile={openProfile}
                   onOpenWelcome={() => setDialog({ kind: "welcome" })}
                   onNotify={notify}
@@ -1059,7 +917,7 @@ export default function App({
                   connection={connection}
                   joining={joiningId === channel.id}
                   settings={settings}
-                  onJoin={() => joinVoice(channel)}
+                  onJoin={() => joinVoice(channel, currentDetail?.server.name ?? "")}
                   onLeave={leaveVoice}
                 />
               ) : (
@@ -1236,6 +1094,9 @@ export default function App({
   }
 }
 
+const headerButtonClass =
+  "relative grid size-10 shrink-0 place-items-center rounded-full text-fg/80 transition-colors duration-150 hover:bg-ink-800 hover:text-fg active:bg-ink-700 md:bg-ink-900";
+
 function HeaderButton({
   label,
   onClick,
@@ -1252,10 +1113,7 @@ function HeaderButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className={cn(
-        "relative grid size-10 shrink-0 place-items-center rounded-full text-fg/80 transition-colors duration-150 hover:bg-ink-800 hover:text-fg active:bg-ink-700 md:bg-ink-900",
-        className,
-      )}
+      className={cn(headerButtonClass, className)}
     >
       {children}
     </button>

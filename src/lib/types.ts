@@ -29,6 +29,8 @@ export interface ServerDTO {
   id: string;
   name: string;
   inviteCode: string;
+  /** URL of the uploaded picture, versioned so a change busts the cache. */
+  icon: string | null;
   /** What the person asking may do here. */
   standing: Standing;
 }
@@ -215,6 +217,46 @@ export interface NotificationDTO {
   read: boolean;
 }
 
+/** How far you've read a channel or conversation, and how much is waiting there. */
+export interface ReadStateDTO {
+  channelId: string;
+  /** The server's id, or `DM_SCOPE` for a conversation. */
+  serverId: string;
+  /** The last message you've seen; null when you've seen none of it. */
+  lastRead: string | null;
+  /** Messages from others after it, counted up to `UNREAD_CAP`. */
+  count: number;
+}
+
+/** Unread counts stop here; the badge shows "99+" well before it. */
+export const UNREAD_CAP = 100;
+
+/** Pushed to every device of the person who just read something, so their badges clear everywhere. */
+export interface ReadEvent {
+  reads: { channelId: string; lastRead: string }[];
+}
+
+/** "all": every message; "mentions": only pings. */
+export type NotifyLevel = "all" | "mentions";
+
+/** Your notification choice for a server, or for one channel or conversation (which overrides its server's). */
+export interface NotifySettingDTO {
+  target: string;
+  scope: "server" | "channel";
+  /** Null on a channel follows the server. */
+  level: NotifyLevel | null;
+  /** Silent until then; far in the future means until turned back on. */
+  mutedUntil: string | null;
+}
+
+/** Someone shut out of a server. */
+export interface BanDTO {
+  user: UserDTO;
+  by: UserDTO | null;
+  reason: string;
+  createdAt: string;
+}
+
 export interface TypingEvent {
   channelId: string;
   user: UserDTO;
@@ -242,6 +284,7 @@ export interface DiscoverySettingsDTO {
 export interface DiscoverServerDTO {
   id: string;
   name: string;
+  icon: string | null;
   description: string;
   category: string;
   tags: string[];
@@ -352,6 +395,7 @@ export interface AdminUserDTO {
 export interface AdminServerDTO {
   id: string;
   name: string;
+  icon: string | null;
   inviteCode: string;
   isPublic: boolean;
   category: string;

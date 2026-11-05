@@ -89,7 +89,7 @@ export async function acceptFriendRequest(me: Id, otherId: string) {
   const row = await Friendship.findOneAndUpdate(
     { requester: otherId, recipient: me, status: "pending" },
     { status: "accepted" },
-    { new: true },
+    { returnDocument: "after" },
   ).lean();
   if (!row) throw new HttpError(404, "درخواستی پیدا نشد");
   notifyChanged(me, otherId);

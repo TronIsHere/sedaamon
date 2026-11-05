@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <defs>
+    <linearGradient id="w" gradientUnits="userSpaceOnUse" x1="0" y1="66" x2="0" y2="134"><stop offset="0" stop-color="#f7ffd9"/><stop offset=".45" stop-color="#e2f592"/><stop offset="1" stop-color="#e2f592" stop-opacity="0"/></linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>
+  </defs>
+  <rect width="200" height="200" fill="#e9e9e6"/>
+  <rect x="24" y="24" width="152" height="152" rx="40" fill="#ffffff"/>
+  <polygon points="100,50 143.3,75 143.3,125 100,150 56.7,125 56.7,75" fill="#0b0b0b" stroke="#0b0b0b" stroke-width="16" stroke-linejoin="round"/>
+  <g stroke="url(#w)" stroke-width="8" stroke-linecap="round">
+    <path d="M76 96 V132 M88 84 V132 M100 70 V132 M112 84 V132 M124 96 V132" filter="url(#glow)" opacity=".8"/>
+    <path d="M76 96 V132 M88 84 V132 M100 70 V132 M112 84 V132 M124 96 V132"/>
+  </g>
+</svg>

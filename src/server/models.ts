@@ -14,6 +14,11 @@ const userSchema = new Schema(
     statusText: { type: String, default: "" },
     // Written when the user's last open connection goes away.
     lastSeenAt: { type: Date, default: null },
+    // Set for accounts made after onboarding existed, until they finish or skip it; older accounts never see it.
+    onboardingPending: { type: Boolean, default: false },
+    // What they said they came for and are into; used to suggest public servers.
+    useCase: { type: String, default: "" },
+    interests: { type: [String], default: [] },
   },
   { timestamps: true },
 );
@@ -38,6 +43,8 @@ const serverSchema = new Schema(
     name: { type: String, required: true },
     owner: { type: ObjectId, ref: "User", required: true },
     inviteCode: { type: String, required: true, unique: true },
+    // Set when a picture is uploaded; it versions the icon URL. The picture itself lives in the ServerIcon collection.
+    iconAt: { type: Date, default: null },
     // Listing in the public directory. Only listed servers can be found and joined without an invite link.
     isPublic: { type: Boolean, default: false },
     description: { type: String, default: "" },
@@ -184,6 +191,13 @@ const avatarSchema = new Schema({
   data: { type: Buffer, required: true },
 });
 
+// A server's picture, kept apart for the same reason.
+const serverIconSchema = new Schema({
+  server: { type: ObjectId, ref: "Server", required: true, unique: true },
+  contentType: { type: String, required: true },
+  data: { type: Buffer, required: true },
+});
+
 // A direct conversation. Its id doubles as the channel id of its messages.
 const conversationSchema = new Schema(
   {
@@ -242,6 +256,46 @@ const notificationSchema = new Schema(
 );
 notificationSchema.index({ user: 1, _id: -1 });
 
+// How far one person has read a channel or conversation: everything up to and including `lastRead` has been seen.
+const readStateSchema = new Schema(
+  {
+    user: { type: ObjectId, ref: "User", required: true },
+    channel: { type: ObjectId, required: true },
+    lastRead: { type: ObjectId, required: true },
+  },
+  { timestamps: true },
+);
+readStateSchema.index({ user: 1, channel: 1 }, { unique: true });
+
+// One person's notification choice for a whole server or for one channel or conversation. A channel's row overrides
+// its server's; a missing row means "every message".
+const notifySettingSchema = new Schema(
+  {
+    user: { type: ObjectId, ref: "User", required: true },
+    // A server id or a channel (or conversation) id, as `scope` says.
+    target: { type: ObjectId, required: true },
+    scope: { type: String, enum: ["server", "channel"], required: true },
+    // What to be told about. Null on a channel follows the server.
+    level: { type: String, enum: ["all", "mentions"], default: null },
+    // Nothing at all until then; far in the future for "until I turn it back on".
+    mutedUntil: { type: Date, default: null },
+  },
+  { timestamps: true },
+);
+notifySettingSchema.index({ user: 1, target: 1 }, { unique: true });
+
+// Someone a server shut out. They are removed, and can't come back by invite or from the directory until unbanned.
+const serverBanSchema = new Schema(
+  {
+    server: { type: ObjectId, ref: "Server", required: true },
+    user: { type: ObjectId, ref: "User", required: true },
+    by: { type: ObjectId, ref: "User", required: true },
+    reason: { type: String, default: "" },
+  },
+  { timestamps: true },
+);
+serverBanSchema.index({ server: 1, user: 1 }, { unique: true });
+
 type ModelOf<S extends Schema> = Model<InferSchemaType<S>>;
 
 function getModel<S extends Schema>(name: string, schema: S): ModelOf<S> {
@@ -260,6 +314,10 @@ export const Message = getModel("Message", messageSchema);
 export const Upload = getModel("Upload", uploadSchema);
 export const Friendship = getModel("Friendship", friendshipSchema);
 export const Avatar = getModel("Avatar", avatarSchema);
+export const ServerIcon = getModel("ServerIcon", serverIconSchema);
 export const Conversation = getModel("Conversation", conversationSchema);
 export const Event = getModel("Event", eventSchema);
 export const Notification = getModel("Notification", notificationSchema);
+export const ReadState = getModel("ReadState", readStateSchema);
+export const NotifySetting = getModel("NotifySetting", notifySettingSchema);
+export const ServerBan = getModel("ServerBan", serverBanSchema);

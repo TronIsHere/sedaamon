@@ -4,7 +4,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { ArrowDown, ArrowUp, Camera, Download, Hash, Loader2, Lock, LogOut, Trash2, Volume2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
-import { resizeToAvatar } from "@/lib/image";
+import { PICTURE_HINT, resizeToAvatar } from "@/lib/image";
 import { can, standingOf } from "@/lib/permissions";
 import { useCloseOnBack, useInstallPrompt } from "@/lib/mobile";
 import { toPersianDigits } from "@/lib/phone";
@@ -421,6 +421,7 @@ export function ProfileDialog({
               </button>
             )}
           </div>
+          <p className="mt-1.5 text-[11px] text-muted">{PICTURE_HINT}</p>
         </div>
       </div>
       <form onSubmit={submit} className="space-y-4">

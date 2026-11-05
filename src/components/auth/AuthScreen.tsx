@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AudioLines } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import LoginForm, { type AuthMode } from "@/components/LoginForm";
 import PixelScene from "@/components/auth/PixelScene";
 import { currentUser } from "@/server/http";
@@ -32,9 +32,7 @@ export default async function AuthScreen({
         <section className="flex flex-col px-4 pt-3 pb-6 sm:px-8 lg:px-12 lg:pt-8 lg:pb-10">
           <header className="flex items-center justify-between gap-4">
             <Link href="/" className="flex items-center gap-2 rounded-full">
-              <span className="grid size-9 place-items-center rounded-full bg-accent-strong text-on-accent">
-                <AudioLines className="size-5" />
-              </span>
+              <BrandMark className="size-9" radius={256} />
               <span className="text-lg font-extrabold">صدامون</span>
             </Link>
             <nav aria-label="ورود یا ثبت‌نام" className="flex items-center gap-1 rounded-full p-1 text-sm ring-1 ring-line">

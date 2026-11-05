@@ -1,4 +1,5 @@
-import { AudioLines, Compass, MessageCircle, Plus, Users } from "lucide-react";
+import { Compass, MessageCircle, Plus, Users } from "lucide-react";
+import { BrandMark } from "@/components/BrandMark";
 import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
 import type { MeDTO, ServerDTO } from "@/lib/types";
@@ -39,9 +40,7 @@ export default function ServerRail({
 }) {
   return (
     <nav aria-label="سرورها" className="flex w-[76px] flex-col items-center bg-ink-900 pt-4 pb-safe-4 md:rounded-[1.75rem] md:pb-4">
-      <span className="grid size-12 shrink-0 place-items-center rounded-full bg-accent-strong text-on-accent">
-        <AudioLines className="size-6" strokeWidth={2.5} />
-      </span>
+      <BrandMark className="size-12 shrink-0" radius={256} />
 
       <div className="mt-5 flex shrink-0 flex-col items-center gap-2.5">
         <RailButton label="پیام‌های مستقیم" active={dmActive} onClick={onDms}>
@@ -78,7 +77,12 @@ export default function ServerRail({
                 count > 0 && !active && "text-fg",
               )}
             >
-              {initials(s.name)}
+              {s.icon ? (
+                // eslint-disable-next-line @next/next/no-img-element -- uploads are already 256px and served by our own route
+                <img src={s.icon} alt="" draggable={false} className="size-full rounded-full object-cover" />
+              ) : (
+                initials(s.name)
+              )}
               {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="absolute -end-1 -bottom-0.5 ring-2 ring-ink-900" />}
             </button>
           );

@@ -12,7 +12,9 @@ Self-hosted voice, video and text channels in the style of Discord, built to run
 - Voice messages: hold to record, release to send (slide away to cancel). Opus at about 16 kbps, so a minute is around 120 KB, and nothing downloads until the listener presses play
 - Online presence for server members and friends
 - Profile pages (name, bio, last seen, shared servers) and friend requests between people who share a server
-- Roles: owner, admin and member. Admins manage channels, delete messages, mute and kick members below them; only the owner assigns admins
+- Roles: owner, admin and member. Admins manage channels, delete messages, mute, kick and ban members below them; only the owner assigns admins
+- Unread counts and a "new messages" line that survive reloads and agree across devices, plus "mark server as read"
+- Per-server, per-channel and per-conversation notifications: mute for 1 h, 8 h, 24 h or until turned back on, and "mentions only"
 - Voice channels you stay connected to while browsing text channels, with camera, screen share, mute and deafen
 - Live "who's in the voice channel" list, driven by LiveKit webhooks
 - Low-data mode that stops receiving video and keeps audio, for weak connections
@@ -56,6 +58,18 @@ npm run dev
 Open http://localhost:3000 (or the `PORT` you set). With `SMS_PROVIDER=console` the login code is shown on the login screen and printed in the server log.
 
 The dev LiveKit config advertises your Mac's Wi-Fi IP (`en0`), so phones on the same network can join at `http://<that-ip>:3000`. Leave `LIVEKIT_PUBLIC_URL` empty in development: the token endpoint then points each browser at the host it opened the app on (a phone would get nothing from `localhost`). Over plain HTTP, phones can join and listen but browsers refuse the microphone, so test talking from phones against a deployed HTTPS server.
+
+### Tests
+
+```bash
+npm test
+```
+
+runs the unit tests (permissions, search, Jalali dates, mentions, notification settings). The database tests for read markers and bans are skipped unless you point them at a throwaway MongoDB; each test file creates and drops its own database next to the one you name:
+
+```bash
+TEST_MONGODB_URI=mongodb://127.0.0.1:27017/sedaamon_test npm test
+```
 
 ## Production (Ubuntu VPS in Iran, PM2 + nginx)
 

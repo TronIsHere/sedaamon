@@ -36,7 +36,7 @@ export const PATCH = handle(async (req, ctx: Ctx) => {
     const updated = await Message.findByIdAndUpdate(
       messageId,
       { content: text, editedAt: new Date(), ...(await keepMentions(existing, text)) },
-      { new: true },
+      { returnDocument: "after" },
     ).lean();
     const message = await serializeMessage(updated!);
     scope.emit("message:edit", { ...message, serverId: scope.serverId });

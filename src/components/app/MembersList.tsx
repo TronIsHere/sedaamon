@@ -116,7 +116,7 @@ export default function MembersList({
         </div>
 
         <div className="flex flex-col items-center pt-3 pb-5 text-center">
-          <ServerAvatar name={server.name} className="size-24 rounded-full text-4xl ring-4 ring-ink-800" />
+          <ServerAvatar name={server.name} icon={server.icon} className="size-24 rounded-full text-4xl ring-4 ring-ink-800" />
           <h2 className="mt-4 max-w-full truncate text-lg font-bold">{server.name}</h2>
           <p className="mt-0.5 text-xs text-muted">
             {toPersianDigits(members.length)} عضو
@@ -131,7 +131,7 @@ export default function MembersList({
           دعوت دیگران
           <Plus className="size-4" />
         </button>
-        {(can(server.standing, "server:manage") || can(server.standing, "role:manage")) && (
+        {(can(server.standing, "server:manage") || can(server.standing, "role:manage") || can(server.standing, "member:moderate")) && (
           <button
             onClick={onSettings}
             className="flex items-center justify-between rounded-xl py-3 text-sm font-semibold text-muted transition hover:text-fg"

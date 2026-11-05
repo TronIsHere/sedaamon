@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
-import { AtSign, BellOff, ChevronDown, CornerUpLeft, FileText, Paperclip, Pin, ScrollText, SearchX, SendHorizontal, Sticker as StickerIcon, X } from "lucide-react";
+import { ArrowUp, AtSign, BellOff, ChevronDown, CornerUpLeft, Paperclip, ScrollText, SearchX, SendHorizontal, Sticker as StickerIcon, X } from "lucide-react";
 import { api } from "@/lib/api";
-import { formatBytes, IMAGE_TYPES, MAX_ATTACHMENTS, MAX_FILE_BYTES, messageSummary } from "@/lib/attachments";
+import { IMAGE_TYPES, MAX_ATTACHMENTS, MAX_FILE_BYTES, messageSummary } from "@/lib/attachments";
 import { cn, formatDateTime, formatDay, sameDay } from "@/lib/format";
 import { prepareImage } from "@/lib/image";
 import { revealMedia } from "@/lib/media";
@@ -15,20 +15,21 @@ import { foldForSearch, matchesSearch } from "@/lib/search";
 import { getSocket } from "@/lib/socket";
 import type { VoiceNote } from "@/lib/recorder";
 import { uploadFile } from "@/lib/upload";
-import type {
-  ChannelDTO,
-  LiveMessageDTO,
-  MeDTO,
-  MemberDTO,
-  MessageDeletedEvent,
-  MessageDTO,
-  ReactionsEvent,
-  RoleDTO,
-  TypingEvent,
-  UserDTO,
+import {
+  UNREAD_CAP,
+  type ChannelDTO,
+  type LiveMessageDTO,
+  type MeDTO,
+  type MemberDTO,
+  type MessageDeletedEvent,
+  type MessageDTO,
+  type ReactionsEvent,
+  type RoleDTO,
+  type TypingEvent,
+  type UserDTO,
 } from "@/lib/types";
-import Skeleton from "@/components/ui/skeleton";
 import Avatar from "./Avatar";
+import { MessagesSkeleton, PageEdge, PendingFiles, PinList, TypingLine, type PendingFile } from "./ChatParts";
 import { Modal } from "./Dialogs";
 import ForwardDialog from "./ForwardDialog";
 import MessageItem, { type MessageActions } from "./MessageItem";
@@ -68,23 +69,24 @@ function withPin(pins: MessageDTO[], m: MessageDTO) {
   return m.pinnedAt ? [m, ...rest].sort((a, b) => b.pinnedAt!.localeCompare(a.pinnedAt!)) : rest;
 }
 
+/**
+ * The first message from someone else since reading stopped: the first after `lastRead`, or without a marker the
+ * `count`-th from the end. Null when it isn't among `messages`. `complete` says nothing older than these can be new
+ * (the page reaches back to the marker, or to the start of the channel).
+ */
+function firstNew(messages: MessageDTO[], since: { lastRead: string | null; count: number }, meId: string, complete: boolean) {
+  const others = messages.filter((m) => m.author.id !== meId);
+  if (since.lastRead) {
+    const reachesBack = complete || (!!messages[0] && messages[0].id <= since.lastRead);
+    return (reachesBack && others.find((m) => m.id > since.lastRead!)?.id) || null;
+  }
+  // Counts stop at the cap, so a capped count can't place the line.
+  const at = others.length - since.count;
+  return since.count < UNREAD_CAP && at >= 0 ? others[at].id : null;
+}
+
 const REPLY_PREVIEW_LENGTH = 120;
 const MENU_SIZE = 6;
-
-/** A file picked in the composer. It uploads right away, so sending only has to name it. */
-interface PendingFile {
-  key: string;
-  name: string;
-  size: number;
-  kind: "image" | "file";
-  /** A local copy of a picture, for its thumbnail here and, once sent, for showing it without downloading it back. */
-  localUrl?: string;
-  progress: number;
-  /** Set once the upload is done. */
-  id?: string;
-  error?: string;
-  abort: AbortController;
-}
 
 /** One row of the "@" menu: a member, or everyone at once. */
 type Candidate = { kind: "user"; user: UserDTO } | { kind: "everyone" };
@@ -98,6 +100,7 @@ export default function ChatView({
   online,
   dm,
   rulesPending,
+  unreadFrom,
   onOpenProfile,
   onOpenWelcome,
   onNotify,
@@ -113,6 +116,8 @@ export default function ChatView({
   online: Record<string, boolean>;
   /** The server's rules haven't been accepted yet, so writing is closed. */
   rulesPending: boolean;
+  /** Where reading stopped when the channel was opened, if messages came after; read only on mount. */
+  unreadFrom: { lastRead: string | null; count: number } | null;
   onOpenProfile: (userId: string) => void;
   /** Reopens the welcome screen with the rules. */
   onOpenWelcome: () => void;
@@ -171,6 +176,11 @@ export default function ChatView({
   /** The message that must stay where it is on screen when the list changes above or below it. */
   const anchor = useRef<{ id: string; offset: number } | null>(null);
   const pendingJump = useRef<string | null>(null);
+  /** What was new when the channel opened. The channel is marked read right away, so this is kept from the first render. */
+  const [newSince] = useState(unreadFrom);
+  /** The first of those messages, once it is known; the "new messages" line goes above it. */
+  const [firstNewId, setFirstNewId] = useState<string | null>(null);
+  const [newBarOpen, setNewBarOpen] = useState(!!unreadFrom);
 
   const q = foldForSearch(search);
   const memberById = useMemo(() => new Map(members.map((m) => [m.user.id, m])), [members]);
@@ -211,6 +221,7 @@ export default function ChatView({
         if (cancelled) return;
         setMessages((live) => addUnique(res.messages, live));
         setHasMore(res.hasMore);
+        if (newSince) setFirstNewId(firstNew(res.messages, newSince, me.id, !res.hasMore));
       })
       .catch((err) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
@@ -300,6 +311,8 @@ export default function ChatView({
       socket.off("message:reactions", onReactions);
       socket.off("typing", onTyping);
     };
+    // `newSince` never changes after mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channel.id, me.id]);
 
   // Drop typing indicators whose sender went quiet.
@@ -384,7 +397,7 @@ export default function ChatView({
   );
 
   /** Replaces the loaded window with another page; whatever was loading is abandoned. */
-  const replaceWindow = async (query: string, prepare: () => void) => {
+  const replaceWindow = async (query: string, prepare: (page: MessagePage) => void) => {
     const mine = ++epoch.current;
     busy.current = true;
     setLoadFailed(null);
@@ -392,7 +405,7 @@ export default function ChatView({
     try {
       const res = await api<MessagePage>(`/api/channels/${channel.id}/messages${query}`);
       if (mine !== epoch.current) return;
-      prepare();
+      prepare(res);
       anchor.current = null;
       setMessages(res.messages);
       setHasMore(res.hasMore);
@@ -409,6 +422,32 @@ export default function ChatView({
     const box = scrollRef.current;
     if (box) box.scrollTo({ top: box.scrollHeight, behavior: "smooth" });
   };
+
+  /** To the first new message, loading the stretch that starts there when it is further back than what is loaded. */
+  const jumpToNew = () => {
+    setNewBarOpen(false);
+    const loaded = firstNewId && document.getElementById(`msg-${firstNewId}`);
+    if (loaded) return loaded.scrollIntoView({ block: "center", behavior: "smooth" });
+    const lastRead = newSince?.lastRead;
+    if (!lastRead) return;
+    replaceWindow(`?after=${lastRead}`, (page) => {
+      stickToBottom.current = false;
+      const first = firstNew(page.messages, { lastRead, count: 0 }, me.id, true);
+      setFirstNewId(first);
+      pendingJump.current = first;
+    });
+  };
+
+  // The bar about new messages goes away once their line has been on screen.
+  const dividerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const line = dividerRef.current;
+    const box = scrollRef.current;
+    if (!line || !box || !newBarOpen) return;
+    const observer = new IntersectionObserver(([e]) => e.isIntersecting && setNewBarOpen(false), { root: box });
+    observer.observe(line);
+    return () => observer.disconnect();
+  }, [firstNewId, newBarOpen, messages.length]);
 
   /** Back to the newest messages, reloading them first when the loaded window ended earlier. */
   const jumpToLatest = () => {
@@ -781,6 +820,22 @@ export default function ChatView({
           }}
         />
       )}
+      {!q && newBarOpen && newSince && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-line bg-accent-strong/10 py-1.5 ps-4 pe-2 text-xs sm:ps-5">
+          <span className="min-w-0 flex-1 truncate font-semibold text-accent">
+            {newSince.count > 99 ? "۹۹+" : toPersianDigits(newSince.count)} پیام تازه از آخرین بازدید
+          </span>
+          {(firstNewId || newSince.lastRead) && (
+            <button onClick={jumpToNew} className="flex shrink-0 items-center gap-1 rounded-full bg-accent-strong px-3 py-1.5 font-semibold text-on-accent hover:brightness-105">
+              <ArrowUp className="size-3.5" />
+              رفتن به اولین پیام تازه
+            </button>
+          )}
+          <button onClick={() => setNewBarOpen(false)} aria-label="بستن" className="grid size-8 shrink-0 place-items-center rounded-full text-muted hover:bg-ink-800 hover:text-fg">
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
       {q && shown.length > 0 && (
         <div className="shrink-0 border-b border-line px-4 py-2 text-center text-xs text-muted">
           {toPersianDigits(shown.length)} پیام پیدا شد{hasMore && " (در پیام‌های بارگذاری‌شده)"}
@@ -817,15 +872,24 @@ export default function ChatView({
           {shown.map((m, i) => {
             const prev = shown[i - 1];
             const newDay = !prev || !sameDay(prev.createdAt, m.createdAt);
+            const isFirstNew = !q && m.id === firstNewId;
             const grouped =
               !q &&
               !newDay &&
+              !isFirstNew &&
               prev.author.id === m.author.id &&
               new Date(m.createdAt).getTime() - new Date(prev.createdAt).getTime() < GROUP_WINDOW_MS;
             const mine = m.author.id === me.id;
             const author = memberById.get(m.author.id);
             return (
               <div key={m.id} data-mid={m.id}>
+                {isFirstNew && (
+                  <div ref={dividerRef} role="separator" className="my-3 flex items-center gap-3 text-xs font-semibold text-danger">
+                    <span className="h-px flex-1 bg-danger/40" />
+                    پیام‌های تازه
+                    <span className="h-px flex-1 bg-danger/40" />
+                  </div>
+                )}
                 {newDay && (
                   <div className="my-5 flex justify-center">
                     <span className="rounded-full bg-ink-800 px-3.5 py-1 text-xs font-medium text-fg/80">
@@ -1045,160 +1109,5 @@ export default function ChatView({
         </Modal>
       )}
     </div>
-  );
-}
-
-/** The strip at either end of the message list while more pages exist; its height is fixed so loading never moves the view. */
-function PageEdge({ loading, failed, onRetry }: { loading: boolean; failed: boolean; onRetry: () => void }) {
-  return (
-    <div className="grid h-10 shrink-0 place-items-center text-xs text-muted" aria-live="polite">
-      {failed ? (
-        <button onClick={onRetry} className="rounded-full bg-ink-800 px-4 py-1.5 text-accent hover:bg-ink-700">
-          تلاش دوباره
-        </button>
-      ) : (
-        loading && <span className="animate-pulse">در حال بارگذاری…</span>
-      )}
-    </div>
-  );
-}
-
-/** The channel's pinned messages: the newest one on a single line that opens into the full list. */
-function PinList({
-  pins,
-  open,
-  onToggle,
-  onPick,
-}: {
-  pins: MessageDTO[];
-  open: boolean;
-  onToggle: () => void;
-  onPick: (messageId: string) => void;
-}) {
-  return (
-    <div className="shrink-0 border-b border-line">
-      <button
-        onClick={onToggle}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-4 py-2.5 text-start text-xs transition-colors hover:bg-ink-850 sm:px-5"
-      >
-        <Pin className="size-3.5 shrink-0 text-accent" />
-        <span className="shrink-0 font-semibold">{toPersianDigits(pins.length)} پیام سنجاق‌شده</span>
-        {!open && (
-          <span dir="auto" className="min-w-0 flex-1 truncate text-muted">
-            {messageSummary(pins[0].content, pins[0].attachments)}
-          </span>
-        )}
-        <ChevronDown className={cn("ms-auto size-4 shrink-0 text-muted transition", open && "rotate-180")} />
-      </button>
-      {open && (
-        <ul className="scrollbar-thin max-h-60 overflow-y-auto px-2 pb-2 sm:px-4">
-          {pins.map((p) => (
-            <li key={p.id}>
-              <button onClick={() => onPick(p.id)} className="w-full rounded-xl px-3 py-2 text-start hover:bg-ink-800">
-                <span className="flex items-center gap-2 text-xs text-muted">
-                  <span className="font-semibold text-fg/80">{p.author.name}</span>
-                  {formatDateTime(p.createdAt)}
-                </span>
-                <span dir="auto" className="mt-0.5 line-clamp-2 block text-sm leading-6 break-words">
-                  {messageSummary(p.content, p.attachments)}
-                </span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function TypingLine({ users }: { users: UserDTO[] }) {
-  const names = users.map((u) => u.name);
-  const text =
-    names.length === 0
-      ? null
-      : names.length === 1
-        ? `${names[0]} در حال نوشتن است`
-        : names.length === 2
-          ? `${names[0]} و ${names[1]} در حال نوشتن هستند`
-          : `${toPersianDigits(names.length)} نفر در حال نوشتن هستند`;
-  return (
-    <div className="flex h-7 items-center gap-2 ps-5 text-xs text-muted" aria-live="polite">
-      {text && (
-        <>
-          <span className="flex gap-0.5" aria-hidden>
-            {[0, 150, 300].map((d) => (
-              <span key={d} className="size-1.5 animate-bounce rounded-full bg-accent" style={{ animationDelay: `${d}ms` }} />
-            ))}
-          </span>
-          <span className="truncate">{text}</span>
-        </>
-      )}
-    </div>
-  );
-}
-
-function MessagesSkeleton() {
-  return (
-    <div className="space-y-6 py-4" aria-hidden>
-      {[60, 40, 75].map((w) => (
-        <div key={w} className="flex gap-3">
-          <Skeleton className="size-9 shrink-0 rounded-full" />
-          <div className="flex flex-1 flex-col gap-2">
-            <Skeleton className="h-3 w-20 rounded-full" />
-            <Skeleton className="h-4 rounded-full bg-ink-850" style={{ width: `${w}%` }} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/** Files picked for the next message, each with its upload progress and a button to take it back out. */
-function PendingFiles({ files, onRemove }: { files: PendingFile[]; onRemove: (f: PendingFile) => void }) {
-  return (
-    <ul aria-label="پیوست‌ها" className="scrollbar-thin mb-1.5 flex gap-2 overflow-x-auto pb-1">
-      {files.map((f) => (
-        <li
-          key={f.key}
-          title={f.error ?? f.name}
-          className={cn(
-            "relative flex h-16 shrink-0 items-center overflow-hidden rounded-2xl bg-ink-800 ring-1",
-            f.error ? "ring-danger/70" : "ring-line",
-            f.kind === "image" ? "w-16" : "w-52 gap-2 ps-2 pe-8",
-          )}
-        >
-          {f.kind === "image" && f.localUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={f.localUrl} alt={f.name} className="size-full object-cover" />
-          ) : (
-            <>
-              <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent/15 text-accent">
-                <FileText className="size-5" />
-              </span>
-              <span className="min-w-0 flex-1 text-xs">
-                <span dir="auto" className="block truncate font-semibold">
-                  {f.name}
-                </span>
-                <span className={cn("block", f.error ? "text-danger" : "text-muted")}>{f.error ? "ناموفق" : formatBytes(f.size)}</span>
-              </span>
-            </>
-          )}
-          {!f.id && !f.error && (
-            <span aria-hidden className="absolute inset-x-0 bottom-0 h-1 bg-ink-950/60">
-              <span className="block h-full bg-accent transition-[width]" style={{ width: `${Math.round(f.progress * 100)}%` }} />
-            </span>
-          )}
-          {f.error && f.kind === "image" && <span className="absolute inset-0 bg-danger-strong/40" />}
-          <button
-            onClick={() => onRemove(f)}
-            aria-label={`حذف ${f.name}`}
-            className="absolute top-1 end-1 grid size-6 place-items-center rounded-full bg-ink-950/75 text-fg hover:bg-ink-950"
-          >
-            <X className="size-3.5" />
-          </button>
-        </li>
-      ))}
-    </ul>
   );
 }

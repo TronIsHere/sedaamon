@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
+import { BrandMark } from "@/components/BrandMark";
 import {
   AudioLines,
   Crown,
@@ -120,12 +121,7 @@ export default function AppMockup() {
 function Rail() {
   return (
     <nav className="hidden w-14 shrink-0 flex-col items-center gap-2 py-2 md:flex">
-      <svg viewBox="0 0 512 512" className="size-10">
-        <rect width="512" height="512" rx="140" fill="#e6f7a3" />
-        <g stroke="#0b0b0b" strokeWidth="40" strokeLinecap="round">
-          <path d="M136 226v60M196 176v160M256 116v280M316 196v120M376 156v200" />
-        </g>
-      </svg>
+      <BrandMark className="size-10" radius={140} />
       <span className="my-1 h-px w-6 bg-white/10" />
       {RAIL.map((s) => (
         <span key={s.label} className="relative">

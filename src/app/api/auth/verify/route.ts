@@ -28,7 +28,7 @@ export const POST = handle(async (req) => {
 
   const user =
     (await User.findOne({ phone }).lean()) ??
-    (await User.create({ phone, color: COLORS[Math.floor(Math.random() * COLORS.length)] })).toObject();
+    (await User.create({ phone, color: COLORS[Math.floor(Math.random() * COLORS.length)], onboardingPending: true })).toObject();
 
   const session = await createSession(user._id);
   const jar = await cookies();

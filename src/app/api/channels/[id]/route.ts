@@ -43,7 +43,7 @@ export const PATCH = handle(async (req, ctx: RouteContext<"/api/channels/[id]">)
 
   if (isPrivate && !before.isPrivate) await assertOtherPublicChannel(String(before.server), id);
 
-  const after = await Channel.findByIdAndUpdate(id, update, { new: true }).lean();
+  const after = await Channel.findByIdAndUpdate(id, update, { returnDocument: "after" }).lean();
   if (!after) throw new HttpError(404, "کانال پیدا نشد");
   if (isPrivate && !before.isPrivate) await detachEvents(id);
   await broadcastChannelChange(before, after);

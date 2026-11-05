@@ -17,7 +17,7 @@ export default function Avatar({
   const circle = (
     <span
       className={cn(
-        "grid shrink-0 place-items-center rounded-full font-semibold text-white ring-2 transition-shadow duration-200",
+        "grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold text-white ring-2 transition-shadow duration-200",
         size === "sm" && "size-6 text-xs",
         size === "md" && "size-9 text-sm",
         size === "lg" && "size-20 text-3xl",
@@ -53,16 +53,21 @@ export default function Avatar({
   );
 }
 
-/** A server's initial on a lime tile, used in the info panel and invite page. */
-export function ServerAvatar({ name, className }: { name: string; className?: string }) {
+/** A server's picture, or its initial on a lime tile when it has none. */
+export function ServerAvatar({ name, icon, className }: { name: string; icon?: string | null; className?: string }) {
   return (
     <span
       className={cn(
-        "grid shrink-0 place-items-center bg-accent-strong font-bold text-on-accent",
+        "grid shrink-0 place-items-center overflow-hidden bg-accent-strong font-bold text-on-accent",
         className,
       )}
     >
-      {name.trim()[0] ?? "?"}
+      {icon ? (
+        // eslint-disable-next-line @next/next/no-img-element -- uploads are already 256px and served by our own route
+        <img src={icon} alt="" draggable={false} className="size-full object-cover" />
+      ) : (
+        (name.trim()[0] ?? "?")
+      )}
     </span>
   );
 }

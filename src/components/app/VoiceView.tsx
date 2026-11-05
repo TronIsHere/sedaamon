@@ -16,7 +16,7 @@ import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
 import { videoKey } from "@/lib/voice";
 import type { ChannelDTO, VoiceParticipant } from "@/lib/types";
-import type { VoiceConnection, VoiceSettings } from "./App";
+import type { VoiceConnection, VoiceSettings } from "./useVoice";
 import Avatar from "./Avatar";
 import VoiceControls from "./VoiceControls";
 import { useWatch, WatchPanel } from "./WatchTogether";
