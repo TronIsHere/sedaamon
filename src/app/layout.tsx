@@ -8,7 +8,7 @@ import { SITE, SITE_URL } from "@/lib/site";
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   // Pages set a short title ("ورود") and the template adds the brand.
-  title: { default: `47397354 ${SITE.title}`, template: `%s · ${SITE.name}` },
+  title: { default: SITE.title, template: `%s · ${SITE.name}` },
   description: SITE.description,
   applicationName: SITE.name,
   openGraph: {
@@ -18,7 +18,11 @@ export const metadata: Metadata = {
     title: SITE.title,
     description: SITE.description,
   },
-  twitter: { card: "summary_large_image", title: SITE.title, description: SITE.description },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE.title,
+    description: SITE.description,
+  },
   appleWebApp: {
     capable: true,
     title: "صدامون",
