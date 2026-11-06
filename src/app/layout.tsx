@@ -8,7 +8,7 @@ import { SITE, SITE_URL } from "@/lib/site";
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   // Pages set a short title ("ورود") and the template adds the brand.
-  title: { default: SITE.title, template: `%s · ${SITE.name}` },
+  title: { default: `47397354 ${SITE.title}`, template: `%s · ${SITE.name}` },
   description: SITE.description,
   applicationName: SITE.name,
   openGraph: {
