@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>صدامون برای صحبت در کانال‌های صوتی و ارسال پیام صوتی به میکروفون نیاز دارد.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>صدامون برای پخش تصویر شما در کانال‌های صوتی به دوربین نیاز دارد.</string>
+</dict>
+</plist>

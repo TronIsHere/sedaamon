@@ -1,0 +1,32 @@
+[package]
+name = "sedaamon-desktop"
+version = "0.1.0"
+description = "Sedaamon for macOS and Windows"
+authors = ["Sedaamon"]
+license = ""
+repository = ""
+edition = "2024"
+rust-version = "1.90"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.12.5", features = ["image-png", "tray-icon"] }
+tauri-plugin-opener = "2.7.2"
+tauri-plugin-window-state = "2.5.0"
+tauri-plugin-deep-link = "2.6.3"
+tauri-plugin-notification = "2.8.0"
+
+# Windows and Linux start a second process for every sedamon:// link; this hands the link to the running app.
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+tauri-plugin-single-instance = { version = "2.5.5", features = ["deep-link"] }

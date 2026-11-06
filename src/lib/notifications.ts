@@ -1,14 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { desktopNotify, isDesktopApp, onDesktopEvent } from "./desktop";
 
 const KEY = "sedaamon:notifications";
 
 const supported = () => typeof window !== "undefined" && "Notification" in window;
 
+/** The desktop app shows native notifications without asking; the WebView's own are unreliable there. */
+const permitted = () => isDesktopApp() || (supported() && Notification.permission === "granted");
+
 function readPref() {
   try {
-    return localStorage.getItem(KEY) === "on";
+    const pref = localStorage.getItem(KEY);
+    // The desktop app starts with notifications on; a browser waits until they are turned on.
+    return pref === "on" || (pref === null && isDesktopApp());
   } catch {
     return false;
   }
@@ -22,14 +28,14 @@ export function useNotificationPref() {
   useEffect(() => {
     // Browser-only state; read it after hydration so server and client markup match.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setAvailable(supported());
-    setEnabled(supported() && Notification.permission === "granted" && readPref());
+    setAvailable(isDesktopApp() || supported());
+    setEnabled(permitted() && readPref());
   }, []);
 
   const toggle = useCallback(async () => {
-    if (!supported()) return false;
+    if (!isDesktopApp() && !supported()) return false;
     let next = !enabled;
-    if (next && Notification.permission !== "granted") next = (await Notification.requestPermission()) === "granted";
+    if (next && !permitted()) next = (await Notification.requestPermission()) === "granted";
     try {
       localStorage.setItem(KEY, next ? "on" : "off");
     } catch {}
@@ -40,9 +46,31 @@ export function useNotificationPref() {
   return { enabled, available, toggle };
 }
 
-/** Shows a system notification; Android Chrome only allows them through the service worker. */
-export async function showNotification(title: string, body: string, tag: string) {
-  if (!supported() || Notification.permission !== "granted" || !readPref()) return;
+/** What to do when a desktop notification is clicked, by tag. Only the latest few are kept. */
+const clickHandlers = new Map<string, () => void>();
+
+if (typeof window !== "undefined" && isDesktopApp()) {
+  onDesktopEvent((e) => {
+    if (e.type !== "notification") return;
+    clickHandlers.get(e.tag)?.();
+    clickHandlers.delete(e.tag);
+  });
+}
+
+/**
+ * Shows a system notification; Android Chrome only allows them through the service worker. In the desktop app it is a
+ * native one, and clicking it runs `onClick`.
+ */
+export async function showNotification(title: string, body: string, tag: string, onClick?: () => void) {
+  if (!permitted() || !readPref()) return;
+  if (isDesktopApp()) {
+    if (onClick) {
+      clickHandlers.delete(tag);
+      clickHandlers.set(tag, onClick);
+      if (clickHandlers.size > 50) clickHandlers.delete(clickHandlers.keys().next().value!);
+    }
+    return desktopNotify(title, body, tag);
+  }
   const options: NotificationOptions = { body, tag, icon: "/icons/icon-192.png", badge: "/icons/icon-192.png" };
   try {
     const reg = await navigator.serviceWorker?.getRegistration();

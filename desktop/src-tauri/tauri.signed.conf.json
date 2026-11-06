@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "macOS": {
+      "entitlements": "Entitlements.signed.plist",
+      "files": { "embedded.provisionprofile": "Sedaamon.provisionprofile" }
+    }
+  }
+}

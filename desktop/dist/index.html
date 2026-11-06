@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>صدامون</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    display: grid; place-items: center; background: #0e0f12; color: #e9e9ee;
+    font: 15px/1.7 -apple-system, "SF Pro Text", Tahoma, sans-serif; text-align: center;
+  }
+  h1 { font-size: 20px; margin: 0 0 6px; }
+  p { margin: 0 0 18px; opacity: .65; }
+  button {
+    font: inherit; padding: 8px 22px; border-radius: 10px; border: 0; cursor: pointer;
+    background: #c6f432; color: #11140a; font-weight: 600;
+  }
+  [hidden] { display: none; }
+</style>
+</head>
+<body>
+  <main>
+    <section id="loading"><h1>صدامون</h1><p>در حال اتصال…</p></section>
+    <section id="failed" hidden>
+      <h1>اتصال برقرار نشد</h1>
+      <p>اینترنت یا شبکه را بررسی کنید و دوباره تلاش کنید.</p>
+      <button id="retry" type="button">تلاش دوباره</button>
+    </section>
+  </main>
+<script>
+  let target = new URLSearchParams(location.search).get("to");
+  const loading = document.getElementById("loading");
+  const failed = document.getElementById("failed");
+
+  async function connect() {
+    loading.hidden = false;
+    failed.hidden = true;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    try {
+      // no-cors: we only care whether the server answers at all.
+      await fetch(target, { mode: "no-cors", cache: "no-store", signal: ctrl.signal });
+      location.replace(target);
+    } catch {
+      loading.hidden = true;
+      failed.hidden = false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // A link opened while the server is still being reached: go there instead once it answers.
+  window.addEventListener("sedaamon:desktop", (e) => {
+    if (e.detail.type !== "open") return;
+    e.preventDefault();
+    target = e.detail.url;
+    if (!failed.hidden) connect();
+  });
+
+  document.getElementById("retry").addEventListener("click", connect);
+  if (target) connect(); else { loading.hidden = true; failed.hidden = false; }
+</script>
+</body>
+</html>

@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
+import { isDesktopApp } from "@/lib/desktop";
+import { isTouchDevice } from "@/lib/mobile";
 import { toPersianDigits } from "@/lib/phone";
 import type { ServerDTO } from "@/lib/types";
 import { ServerAvatar } from "@/components/app/Avatar";
@@ -19,6 +21,13 @@ export default function JoinInvite({
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [offerApp, setOfferApp] = useState(false);
+
+  // On a computer, the invite can also open in the desktop app (if it is installed). Read after hydration.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setOfferApp(!isDesktopApp() && !isTouchDevice());
+  }, []);
 
   async function join() {
     setBusy(true);
@@ -49,6 +58,11 @@ export default function JoinInvite({
             پیوستن به سرور
           </button>
           {error && <p className="mt-3 text-sm text-danger">{error}</p>}
+          {offerApp && (
+            <a href={`sedamon://invite/${encodeURIComponent(code)}`} className="mt-4 inline-block text-sm text-muted hover:text-fg hover:underline">
+              باز کردن در برنامهٔ دسکتاپ صدامون
+            </a>
+          )}
         </>
       ) : (
         <>

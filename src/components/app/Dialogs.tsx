@@ -84,9 +84,9 @@ export function SubmitButton({ busy, disabled, children }: { busy: boolean; disa
   );
 }
 
-export function ServerDialog({ onClose, onDone }: { onClose: () => void; onDone: (s: ServerDTO) => void }) {
-  const [mode, setMode] = useState<"create" | "join">("create");
-  const [value, setValue] = useState("");
+export function ServerDialog({ invite, onClose, onDone }: { invite?: string; onClose: () => void; onDone: (s: ServerDTO) => void }) {
+  const [mode, setMode] = useState<"create" | "join">(invite ? "join" : "create");
+  const [value, setValue] = useState(invite ?? "");
   const { busy, error, submit } = useSubmit(
     () =>
       mode === "create"

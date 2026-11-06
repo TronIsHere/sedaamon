@@ -609,6 +609,21 @@ export function Footer() {
           </Link>
         ))}
       </nav>
+      <a
+        referrerPolicy="origin"
+        target="_blank"
+        href="https://trustseal.enamad.ir/?id=8559464&Code=irtw8EIeY9ZIooItZNsGuv2pT8hrEmDL"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          referrerPolicy="origin"
+          src="https://trustseal.enamad.ir/logo.aspx?id=8559464&Code=irtw8EIeY9ZIooItZNsGuv2pT8hrEmDL"
+          alt=""
+          style={{ cursor: "pointer" }}
+          // @ts-expect-error enamad requires this non-standard attribute
+          code="irtw8EIeY9ZIooItZNsGuv2pT8hrEmDL"
+        />
+      </a>
     </footer>
   );
 }

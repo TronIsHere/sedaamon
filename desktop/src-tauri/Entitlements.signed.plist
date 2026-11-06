@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Entitlements.plist plus Universal Links, for builds signed with a Developer ID and a provisioning profile
+     (tauri.signed.conf.json). Replace TEAMID with the Apple Developer team id. An unsigned build that claims
+     these is killed at launch, so the everyday config leaves them out. -->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
+  <key>com.apple.security.device.camera</key>
+  <true/>
+  <key>com.apple.security.network.client</key>
+  <true/>
+  <key>com.apple.application-identifier</key>
+  <string>TEAMID.ir.arzhaam.seda</string>
+  <key>com.apple.developer.team-identifier</key>
+  <string>TEAMID</string>
+  <key>com.apple.developer.associated-domains</key>
+  <array>
+    <string>applinks:sedamon.ir</string>
+  </array>
+</dict>
+</plist>

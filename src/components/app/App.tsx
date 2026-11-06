@@ -13,6 +13,7 @@ import { useCloseOnBack, useSwipe } from "@/lib/mobile";
 import { pingsUser } from "@/lib/mentions";
 import { countsUnread, shouldAlert } from "@/lib/notify";
 import { showNotification } from "@/lib/notifications";
+import { onDesktopEvent, setDesktopBadge } from "@/lib/desktop";
 import { statusLine } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
 import { useToast } from "@/components/ui/toast";
@@ -58,9 +59,11 @@ import { WatchProvider } from "./WatchTogether";
 import { useNotifySettings } from "./useNotifySettings";
 import { useReadState, type Unread } from "./useReadState";
 import { useVoice } from "./useVoice";
+import DesktopVoice from "./DesktopVoice";
 
 type Dialog =
-  | { kind: "server" }
+  /** `invite` opens it on joining with that code (a sedamon:// link opened in the desktop app). */
+  | { kind: "server"; invite?: string }
   | { kind: "profile" }
   | { kind: "serverSettings" }
   | { kind: "events" }
@@ -112,7 +115,7 @@ export default function App({
   const dmsRef = useRef(dms);
   const notificationsRef = useRef(notifications);
   /** Latest openers for toast taps; the socket handlers outlive the render that made them. */
-  const openFromToast = useRef<{ ping: (n: NotificationDTO) => void; dm: (userId: string) => void } | null>(null);
+  const openFromToast = useRef<{ ping: (n: Pick<NotificationDTO, "serverId" | "channelId">) => void; dm: (userId: string) => void } | null>(null);
   const { toast, dismiss: dismissToast } = useToast();
 
   // Reads made here or on another device take their pings off the list too. Ids sort as text in the order they were made.
@@ -405,7 +408,9 @@ export default function App({
           : serverName
             ? `${m.author.name} در ${serverName}`
             : m.author.name;
-        showNotification(title, messageSummary(m.content, m.attachments), m.channelId);
+        showNotification(title, messageSummary(m.content, m.attachments), m.channelId, () =>
+          openFromToast.current?.ping({ serverId: m.serverId, channelId: m.channelId }),
+        );
         // Pings get their own toast below; a direct message is the other thing worth interrupting for.
         if (m.serverId === DM_SCOPE)
           toast({
@@ -557,10 +562,25 @@ export default function App({
   const unreadTotal = Object.values(unreadView).reduce((n, u) => n + u.count, 0);
   useEffect(() => {
     document.title = unreadTotal ? `(${toPersianDigits(unreadTotal)}) صدامون` : "صدامون";
+    setDesktopBadge(unreadTotal);
   }, [unreadTotal]);
+  useEffect(() => () => setDesktopBadge(0), []);
+
+  // An invite link opened in the desktop app joins from here, so a voice call keeps going.
+  useEffect(
+    () =>
+      onDesktopEvent((e, event) => {
+        const code = e.type === "open" && e.path.match(/^\/invite\/([\w-]+)$/)?.[1];
+        if (!code) return;
+        event.preventDefault();
+        setSidebarOpen(false);
+        setDialog({ kind: "server", invite: code });
+      }),
+    [],
+  );
 
   /** Opens the channel a ping came from. */
-  const openNotification = (n: NotificationDTO) => {
+  const openNotification = (n: Pick<NotificationDTO, "serverId" | "channelId">) => {
     setDialog(null);
     dismissToast(`ch:${n.channelId}`);
     setSidebarOpen(false);
@@ -885,6 +905,7 @@ export default function App({
               </button>
             )}
 
+            {connection && <DesktopVoice connection={connection} settings={settings} onLeave={leaveVoice} />}
             {connection && channel?.id !== connection.channelId && (
               <VoiceBar connection={connection} settings={settings} onOpen={openConnectedChannel} onLeave={leaveVoice} />
             )}
@@ -946,7 +967,7 @@ export default function App({
           )}
         </div>
 
-        {dialog?.kind === "server" && <ServerDialog onClose={() => setDialog(null)} onDone={addServer} />}
+        {dialog?.kind === "server" && <ServerDialog invite={dialog.invite} onClose={() => setDialog(null)} onDone={addServer} />}
         {dialog?.kind === "discover" && (
           <DiscoverDialog
             onClose={() => setDialog(null)}

@@ -48,6 +48,8 @@ export function useCloseOnBack(open: boolean, onClose: () => void) {
       // Closed from the UI: drop the history entry we added, without closing anything else.
       pendingBack = setTimeout(() => {
         pendingBack = undefined;
+        // The overlay went away because the page navigated (a link inside it): our entry is no longer the current one, and going back would undo that navigation.
+        if (!window.history.state?.sedaamonOverlay) return;
         ignorePops++;
         window.history.back();
       }, 0);
