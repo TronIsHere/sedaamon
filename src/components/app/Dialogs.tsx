@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Camera, Download, Hash, Loader2, Lock, LogOut, Trash2, Volume2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera, Clapperboard, Download, Hash, Loader2, Lock, LogOut, Trash2, Volume2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { PICTURE_HINT, resizeToAvatar } from "@/lib/image";
@@ -245,6 +245,12 @@ function CategoryField({ categories, value, onChange }: { categories: CategoryDT
   );
 }
 
+const CHANNEL_KINDS = {
+  text: { label: "متنی", hint: "پیام، لینک و گفت‌وگوی نوشتاری" },
+  voice: { label: "صوتی", hint: "گفت‌وگوی صوتی، تصویر و اشتراک صفحه" },
+  cinema: { label: "سینما", hint: "کتابخانهٔ فیلم و تماشای هم‌زمان، همراه با گفت‌وگوی صوتی" },
+} as const;
+
 export function CreateChannelDialog({
   serverId,
   members,
@@ -277,7 +283,7 @@ export function CreateChannelDialog({
     <Modal title="ساختن کانال" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-2">
-          {(["text", "voice"] as const).map((t) => (
+          {(["text", "voice", "cinema"] as const).map((t) => (
             <label
               key={t}
               className={cn(
@@ -286,12 +292,10 @@ export function CreateChannelDialog({
               )}
             >
               <input type="radio" className="sr-only" checked={type === t} onChange={() => setType(t)} />
-              {t === "text" ? <Hash className="size-5 text-muted" /> : <Volume2 className="size-5 text-muted" />}
+              {t === "text" ? <Hash className="size-5 text-muted" /> : t === "voice" ? <Volume2 className="size-5 text-muted" /> : <Clapperboard className="size-5 text-muted" />}
               <div>
-                <p className="font-semibold">{t === "text" ? "متنی" : "صوتی"}</p>
-                <p className="text-xs text-muted">
-                  {t === "text" ? "پیام، لینک و گفت‌وگوی نوشتاری" : "گفت‌وگوی صوتی، تصویر و اشتراک صفحه"}
-                </p>
+                <p className="font-semibold">{CHANNEL_KINDS[t].label}</p>
+                <p className="text-xs text-muted">{CHANNEL_KINDS[t].hint}</p>
               </div>
             </label>
           ))}

@@ -1,6 +1,6 @@
 import { Types } from "mongoose";
 import { toLatinDigits } from "@/lib/phone";
-import type { AdminChannelDTO, AdminMessageDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO } from "@/lib/types";
+import { isVoiceRoom, VOICE_ROOM_TYPES, type AdminChannelDTO, type AdminMessageDTO, type AdminServerDTO, type AdminStatsDTO, type AdminUserDTO } from "@/lib/types";
 import { channelAudience } from "./access";
 import { isAdminPhone } from "./admins";
 import { HttpError } from "./errors";
@@ -48,7 +48,7 @@ export async function adminStats(): Promise<AdminStatsDTO> {
     Server.estimatedDocumentCount(),
     Server.countDocuments({ isPublic: true }),
     Channel.estimatedDocumentCount(),
-    Channel.countDocuments({ type: "voice" }),
+    Channel.countDocuments({ type: { $in: VOICE_ROOM_TYPES } }),
     Message.estimatedDocumentCount(),
     Message.countDocuments({ createdAt: { $gte: weekAgo } }),
   ]);
@@ -214,7 +214,7 @@ export async function deleteChannel(channelId: string) {
   }
 
   const audience = await channelAudience(channel);
-  if (channel.type === "voice") {
+  if (isVoiceRoom(channel.type)) {
     clearVoiceChannel(serverId, channelId);
     await closeVoiceRooms([channelId]);
   }

@@ -1,0 +1,26 @@
+# The shortest way to HTTPS: Caddy gets and renews certificates by itself.
+# Replace example.com with your domain and make both names point at this server in DNS.
+# Install Caddy, put this in /etc/caddy/Caddyfile, then: systemctl reload caddy
+#
+# Note: Caddy's automatic certificates need to reach Let's Encrypt (or another ACME CA).
+# Where that is blocked, use certificates from a local CA and the nginx config instead.
+
+example.com {
+	# Slow down guessing of login codes and SMS flooding.
+	# Needs the rate_limit plugin (caddy add-package github.com/mholt/caddy-ratelimit);
+	# without it, delete this block and rate-limit in a firewall or use deploy/nginx.conf.
+	# rate_limit {
+	#     zone auth {
+	#         match { path /api/auth/* }
+	#         key {remote_host}
+	#         events 10
+	#         window 1m
+	#     }
+	# }
+	reverse_proxy 127.0.0.1:3000
+}
+
+# LiveKit signalling (WebSocket). Media goes straight to the server on UDP 50000-60000.
+rtc.example.com {
+	reverse_proxy 127.0.0.1:7880
+}

@@ -21,6 +21,7 @@ import {
   Users,
   Volume2,
   X,
+  Clapperboard,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { categoryLabel } from "@/lib/discovery";
@@ -691,7 +692,13 @@ function ChannelsTab({ scope, onClearScope, onMessages }: { scope: Scope; onClea
               <TableRow key={c.id}>
                 <TableCell>
                   <div className="flex min-w-36 items-center gap-2">
-                    {c.type === "voice" ? <Volume2 className="size-4 shrink-0 text-muted" /> : <Hash className="size-4 shrink-0 text-muted" />}
+                    {c.type === "voice" ? (
+                      <Volume2 className="size-4 shrink-0 text-muted" />
+                    ) : c.type === "cinema" ? (
+                      <Clapperboard className="size-4 shrink-0 text-muted" />
+                    ) : (
+                      <Hash className="size-4 shrink-0 text-muted" />
+                    )}
                     <span className="truncate font-medium">{c.name}</span>
                     {c.isPrivate && <Lock className="size-3.5 shrink-0 text-muted" aria-label="خصوصی" />}
                     {!!c.inVoice && <Badge tone="accent">{fmt(c.inVoice)} نفر داخل</Badge>}

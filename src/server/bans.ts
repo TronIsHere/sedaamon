@@ -1,6 +1,6 @@
 import type { Types } from "mongoose";
 import { canModerate, NO_STANDING, type Standing } from "@/lib/permissions";
-import type { BanDTO } from "@/lib/types";
+import { VOICE_ROOM_TYPES, type BanDTO } from "@/lib/types";
 import { HttpError } from "./errors";
 import { removeFromVoice } from "./livekit";
 import { Channel, Member, ServerBan, User } from "./models";
@@ -22,7 +22,7 @@ export async function removeMember(serverId: string, userId: string, how: "left"
   sockets?.emit("server:removed", { serverId, kicked: how !== "left", banned: how === "banned" });
 
   // Someone removed mid-call shouldn't keep talking in a room they can no longer see.
-  const voice = await Channel.find({ server: serverId, type: "voice" }, { _id: 1 }).lean();
+  const voice = await Channel.find({ server: serverId, type: { $in: VOICE_ROOM_TYPES } }, { _id: 1 }).lean();
   const inRoom = voice.map((c) => String(c._id)).filter((id) => realtime.voice.get(id)?.has(userId));
   await removeFromVoice(inRoom.map((id) => [id, [userId]]));
 }

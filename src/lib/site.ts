@@ -5,8 +5,8 @@ import type { Metadata } from "next";
  * llms.txt all read from here, so search engines, AI assistants and the landing page tell the same story.
  */
 
-// The public origin. Set SITE_URL when the site moves to its final domain.
-export const SITE_URL = (process.env.SITE_URL || "https://seda.arzhaam.ir").replace(/\/$/, "");
+// The public origin. Set SITE_URL to the address people use; the default only suits local development.
+export const SITE_URL = (process.env.SITE_URL || "http://localhost:3000").replace(/\/$/, "");
 
 export const SITE = {
   name: "صدامون",
@@ -20,6 +20,8 @@ export const SITE = {
     "Sedaamon is a Persian, right-to-left voice, video and text chat platform with Discord-style servers and channels. It runs entirely on servers inside Iran, so it works without a VPN and keeps working when international internet access is cut.",
   // Set to show a contact line on the about and privacy pages and in the Organization schema.
   contactEmail: process.env.SITE_CONTACT_EMAIL || undefined,
+  // The eNAMAD trust seal shown in the footer; only when both ENAMAD_ID and ENAMAD_CODE are set (Iranian domains only).
+  enamad: process.env.ENAMAD_ID && process.env.ENAMAD_CODE ? { id: process.env.ENAMAD_ID, code: process.env.ENAMAD_CODE } : undefined,
   // Bump when the public pages change; the sitemap reports it as lastModified.
   updated: "2026-11-05",
 };

@@ -3,7 +3,7 @@ import type { Types } from "mongoose";
 import { CATEGORY_IDS, cleanTags, MAX_DESCRIPTION, MIN_DESCRIPTION } from "@/lib/discovery";
 import { foldForSearch, matchesSearch } from "@/lib/search";
 import { NO_STANDING } from "@/lib/permissions";
-import type { DiscoverDTO, DiscoverySettingsDTO, MemberDTO, ServerDetailDTO, ServerDTO, WelcomeDTO } from "@/lib/types";
+import { isVoiceRoom, type DiscoverDTO, type DiscoverySettingsDTO, type MemberDTO, type ServerDetailDTO, type ServerDTO, type WelcomeDTO } from "@/lib/types";
 import { memberCanView } from "./access";
 import { isBanned } from "./bans";
 import { listEvents } from "./events";
@@ -55,7 +55,7 @@ export async function getServerDetail(serverId: string, userId: Types.ObjectId):
       const u = usersById.get(String(m.user));
       return u ? [toMember(m, u)] : [];
     }),
-    voice: voiceSnapshot(channels.filter((c) => c.type === "voice").map((c) => String(c._id))),
+    voice: voiceSnapshot(channels.filter((c) => isVoiceRoom(c.type)).map((c) => String(c._id))),
     online: onlineAmong(members.map((m) => String(m.user))),
     events,
     discovery: toDiscovery(server),
@@ -325,7 +325,7 @@ export async function deleteServer(serverId: string) {
   room?.emit("server:removed", { serverId, kicked: false, deleted: true });
   room?.socketsLeave(serverRoom(serverId));
 
-  const voiceIds = channels.filter((c) => c.type === "voice").map((c) => String(c._id));
+  const voiceIds = channels.filter((c) => isVoiceRoom(c.type)).map((c) => String(c._id));
   for (const id of voiceIds) clearVoiceChannel(serverId, id);
   await closeVoiceRooms(voiceIds);
 

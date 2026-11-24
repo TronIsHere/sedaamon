@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Not part of the web app: the Tauri shell (and its build output) and local tooling.
+    "desktop/**",
+    ".claude/**",
   ]),
 ]);
 

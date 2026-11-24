@@ -4,15 +4,46 @@
     {
       "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3100
     },
     {
       "name": "dev-3101",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "env": { "PORT": "3101" },
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "env": {
+        "PORT": "3101"
+      },
       "port": 3101
+    },
+    {
+      "name": "livekit",
+      "runtimeExecutable": "livekit-server",
+      "runtimeArgs": [
+        "--config",
+        "livekit.dev.yaml",
+        "--node-ip",
+        "127.0.0.1"
+      ],
+      "port": 7880
+    },
+    {
+      "name": "dev-3100",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "env": {
+        "PORT": "3100"
+      },
+      "port": 3100
     }
   ]
 }

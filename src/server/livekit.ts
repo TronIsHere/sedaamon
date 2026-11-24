@@ -75,21 +75,27 @@ async function lookupServer(channelId: string) {
   return String(channel.server);
 }
 
-/** Applies a LiveKit webhook to the voice presence map. Throws if the signature is invalid. */
+/**
+ * Applies a LiveKit webhook to the voice presence map. Throws if the signature is invalid.
+ * Returns the channel someone just left (or that closed), so the caller can react to a room going quiet.
+ */
 export async function handleLiveKitWebhook(body: string, authHeader: string | null) {
   const event = await new WebhookReceiver(apiKey(), apiSecret()).receive(body, authHeader ?? undefined);
   const channelId = event.room && channelIdFromRoom(event.room.name);
-  if (!channelId) return;
+  if (!channelId) return null;
   const serverId = await lookupServer(channelId);
-  if (!serverId) return;
+  if (!serverId) return null;
 
   if (event.event === "participant_joined" && event.participant) {
     setVoiceParticipant(serverId, channelId, toParticipant(event.participant), true);
   } else if (event.event === "participant_left" && event.participant) {
     setVoiceParticipant(serverId, channelId, toParticipant(event.participant), false);
+    return channelId;
   } else if (event.event === "room_finished") {
     clearVoiceChannel(serverId, channelId);
+    return channelId;
   }
+  return null;
 }
 
 /** Rebuilds the presence map from LiveKit, e.g. after the Node process restarts. */

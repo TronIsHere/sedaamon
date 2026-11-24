@@ -1,6 +1,7 @@
 import { isValidObjectId, type Types } from "mongoose";
 import { z } from "zod";
 import { canViewChannel, type Standing } from "@/lib/permissions";
+import { isVoiceRoom, VOICE_ROOM_TYPES } from "@/lib/types";
 import { accessOf, channelAudience } from "./access";
 import { HttpError } from "./errors";
 import { broadcastEvent } from "./events";
@@ -44,7 +45,7 @@ interface ChannelDoc {
   _id: Types.ObjectId;
   server: Types.ObjectId;
   name: string;
-  type: "text" | "voice";
+  type: "text" | "voice" | "cinema";
   position: number;
   category?: Types.ObjectId | null;
   isPrivate?: boolean | null;
@@ -70,7 +71,7 @@ export async function broadcastChannelChange(before: ChannelDoc, after: ChannelD
   emitToUsers([...next].filter((id) => !prev.has(id)), "channel:new", channel);
   const lost = [...prev].filter((id) => !next.has(id));
   emitToUsers(lost, "channel:delete", { serverId, channelId: channel.id });
-  if (after.type === "voice") await removeFromVoice([[channel.id, lost]]);
+  if (isVoiceRoom(after.type)) await removeFromVoice([[channel.id, lost]]);
 }
 
 /** A private channel can't be the meeting place of an event the whole server sees. */
@@ -84,7 +85,7 @@ export async function detachEvents(channelId: string) {
 /** When people lose roles or permissions, takes them out of the private voice rooms they could only join before. */
 export async function revokeVoiceAccess(serverId: string, changes: { userId: string; before: Standing; after: Standing }[]) {
   if (!changes.length) return;
-  const rooms = await Channel.find({ server: serverId, type: "voice", isPrivate: true }).lean();
+  const rooms = await Channel.find({ server: serverId, type: { $in: VOICE_ROOM_TYPES }, isPrivate: true }).lean();
   const lost = rooms.map((c): [string, string[]] => {
     const access = accessOf(c);
     const users = changes.filter(({ userId, before, after }) => canViewChannel(access, before, userId) && !canViewChannel(access, after, userId));

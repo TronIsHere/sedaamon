@@ -1,0 +1,55 @@
+# Self-hosting on a Linux server:  see docs/en/installation.md
+#
+#   cp .env.example .env            # then edit it (SITE_URL, keys, SMS, admin phone…)
+#   cp deploy/livekit.example.yaml livekit.yaml   # then edit it
+#   docker compose up -d --build
+#
+# Put a reverse proxy with HTTPS in front (deploy/Caddyfile.example or deploy/nginx.conf):
+#   your-domain      → 127.0.0.1:3000   (the app)
+#   rtc.your-domain  → 127.0.0.1:7880   (LiveKit signalling)
+# MongoDB is not published on any port; only the app container can reach it.
+
+services:
+  app:
+    build:
+      context: .
+      args:
+        SITE_URL: ${SITE_URL:-http://localhost:3000}
+        SITE_CONTACT_EMAIL: ${SITE_CONTACT_EMAIL:-}
+        ENAMAD_ID: ${ENAMAD_ID:-}
+        ENAMAD_CODE: ${ENAMAD_CODE:-}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      MONGODB_URI: mongodb://mongo:27017/sedaamon
+      # LiveKit runs on the host network (it needs the UDP media range), so reach it through the host.
+      LIVEKIT_URL: http://host.docker.internal:7880
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:3000:3000" # only the reverse proxy on this machine may talk to the app
+    volumes:
+      - uploads:/data/uploads
+    depends_on:
+      - mongo
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo:/data/db
+
+  livekit:
+    image: livekit/livekit-server:v1.13
+    restart: unless-stopped
+    network_mode: host # WebRTC needs the real UDP ports 50000-60000, 7881/tcp and the TURN ports
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+      - /etc/ssl/sedaamon:/etc/ssl/sedaamon:ro # TURN certificate, if you enabled turn: in livekit.yaml
+
+volumes:
+  uploads:
+  mongo:

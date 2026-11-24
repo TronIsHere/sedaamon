@@ -10,7 +10,7 @@ import { useNotificationPref } from "@/lib/notifications";
 import { can, isMuted, OWNER_LABEL, standingOf, topRole } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { statusLine } from "@/lib/status";
-import type { ChannelDTO, MeDTO, MemberDTO, RoleDTO, ServerDTO, VoiceStates } from "@/lib/types";
+import { isVoiceRoom, type ChannelDTO, type MeDTO, type MemberDTO, type RoleDTO, type ServerDTO, type VoiceStates } from "@/lib/types";
 import Avatar, { ServerAvatar } from "./Avatar";
 import { BadgeIcon } from "./Badges";
 import { RoleIcon } from "./RoleBadge";
@@ -50,7 +50,7 @@ export default function MembersList({
 }) {
   const swipe = useSwipe((toward) => toward === "end" && onClose());
   const notifications = useNotificationPref();
-  const liveVoice = channels.filter((c) => c.type === "voice" && voiceStates[c.id]?.length);
+  const liveVoice = channels.filter((c) => isVoiceRoom(c.type) && voiceStates[c.id]?.length);
   const inVoice = new Set(liveVoice.flatMap((c) => voiceStates[c.id].map((p) => p.id)));
   const [confirmLeave, setConfirmLeave] = useState(false);
   // Higher roles first, then people in voice, then by name.

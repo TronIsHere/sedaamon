@@ -4,7 +4,9 @@ import { broadcastChannelChange, categoryOf, channelAccessInput, detachEvents, m
 import { filesOfChannels, releaseFiles } from "@/server/files";
 import { assertPermission, handle, HttpError, requireChannelAccess, requireUser } from "@/server/http";
 import { Channel, Event, Message } from "@/server/models";
-import { emitToAudience } from "@/server/realtime";
+import { clearVoiceChannel, emitToAudience } from "@/server/realtime";
+import { closeVoiceRooms } from "@/server/livekit";
+import { isVoiceRoom } from "@/lib/types";
 import { toChannel } from "@/server/serialize";
 
 /** Members who can't see private channels need somewhere to land, so one public channel always stays. */
@@ -62,6 +64,10 @@ export const DELETE = handle(async (_req, ctx: RouteContext<"/api/channels/[id]"
 
   const audience = await channelAudience(channel);
 
+  if (isVoiceRoom(channel.type)) {
+    clearVoiceChannel(serverId, id);
+    await closeVoiceRooms([id]);
+  }
   const files = await filesOfChannels([id]);
   await Promise.all([Channel.deleteOne({ _id: id }), Message.deleteMany({ channel: id }), Event.updateMany({ channel: id }, { channel: null })]);
   void releaseFiles(files);

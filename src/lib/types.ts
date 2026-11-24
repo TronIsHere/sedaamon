@@ -1,6 +1,11 @@
 import type { Permission, Standing } from "./permissions";
 
-export type ChannelType = "text" | "voice";
+export type ChannelType = "text" | "voice" | "cinema";
+
+/** Rooms people join for a call: plain voice rooms, and cinemas (a call with a shared film on top). */
+export const isVoiceRoom = (type: ChannelType | "dm") => type === "voice" || type === "cinema";
+/** The same, for database queries: `{ type: { $in: VOICE_ROOM_TYPES } }`. */
+export const VOICE_ROOM_TYPES: ChannelType[] = ["voice", "cinema"];
 
 /** What a person chose to show next to their name. Whether they are connected is tracked separately. */
 export type Status = "available" | "busy" | "away" | "gaming";
@@ -332,6 +337,46 @@ export interface ServerDetailDTO {
   discovery: DiscoverySettingsDTO;
   welcome: WelcomeDTO;
   onboarding: OnboardingDTO;
+}
+
+/** A film in the app-wide library that every cinema room plays from. */
+export interface MovieDTO {
+  id: string;
+  name: string;
+  size: number;
+  /** Seconds, as measured by the browser that uploaded it. */
+  duration: number;
+  contentType: string;
+  uploadedBy: UserDTO | null;
+  createdAt: string;
+  /** Streams the film (byte ranges, so it can be seeked). */
+  url: string;
+}
+
+/**
+ * What a cinema is showing. The server is the clock: while playing, the film is at
+ * `position + (serverNow - updatedAt) / 1000` seconds, whoever started it and whoever has left since.
+ */
+export interface CinemaStateDTO {
+  movieId: string | null;
+  playing: boolean;
+  /** Seconds into the film at `updatedAt`. */
+  position: number;
+  /** Server time (ms) of the last change. */
+  updatedAt: number;
+  /** Who made the last change. */
+  by: string | null;
+}
+
+export interface CinemaDTO {
+  movies: MovieDTO[];
+  state: CinemaStateDTO;
+  /** The server's clock (ms) when this was sent, to line up with the local one. */
+  serverNow: number;
+  /** Whether this person is the site admin (ADMIN_PHONES), the only one who adds films to the library and removes them. */
+  canManage: boolean;
+  /** The largest film the server accepts, in bytes. */
+  maxBytes: number;
 }
 
 /** Where a message can be forwarded to: text channels the person can write in, and people they may message. */

@@ -111,13 +111,41 @@ const channelSchema = new Schema(
   {
     server: { type: ObjectId, ref: "Server", required: true, index: true },
     name: { type: String, required: true },
-    type: { type: String, enum: ["text", "voice"], required: true },
+    type: { type: String, enum: ["text", "voice", "cinema"], required: true },
     position: { type: Number, default: 0 },
     category: { type: ObjectId, ref: "Category", default: null },
     // A private channel is hidden from everyone but those who see every private channel, these roles (by id) and these people.
     isPrivate: { type: Boolean, default: false },
     allowedRoles: { type: [String], default: [] },
     allowedMembers: { type: [{ type: ObjectId, ref: "User" }], default: [] },
+    // Cinemas only: what is showing. While playing, the film is at position + (now - updatedAt).
+    cinema: {
+      type: new Schema(
+        {
+          movie: { type: ObjectId, ref: "Movie", default: null },
+          playing: { type: Boolean, default: false },
+          position: { type: Number, default: 0 },
+          updatedAt: { type: Date, default: () => new Date() },
+          by: { type: String, default: null },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
+  },
+  { timestamps: true },
+);
+
+// A film in the app-wide library every cinema room plays from; only the site admin adds them.
+// The bytes are in storage under `key` and go with the film.
+const movieSchema = new Schema(
+  {
+    uploader: { type: ObjectId, ref: "User", default: null },
+    key: { type: String, required: true },
+    name: { type: String, required: true },
+    contentType: { type: String, required: true },
+    size: { type: Number, required: true },
+    duration: { type: Number, required: true },
   },
   { timestamps: true },
 );
@@ -310,6 +338,7 @@ export const Member = getModel("Member", memberSchema);
 export const ServerRole = getModel("Role", roleSchema);
 export const Category = getModel("Category", categorySchema);
 export const Channel = getModel("Channel", channelSchema);
+export const Movie = getModel("Movie", movieSchema);
 export const Message = getModel("Message", messageSchema);
 export const Upload = getModel("Upload", uploadSchema);
 export const Friendship = getModel("Friendship", friendshipSchema);

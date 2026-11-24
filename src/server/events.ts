@@ -1,5 +1,5 @@
 import type { Types } from "mongoose";
-import type { EventAlert, EventDTO } from "@/lib/types";
+import { VOICE_ROOM_TYPES, type EventAlert, type EventDTO } from "@/lib/types";
 import { HttpError } from "./errors";
 import { Channel, Event, User } from "./models";
 import { emitToServer, emitToUsers } from "./realtime";
@@ -64,7 +64,7 @@ export async function validateEvent(serverId: string, input: EventInput, { creat
   if (creating && input.startsAt.getTime() < Date.now() - 60_000) throw new HttpError(400, "زمان رویداد باید در آینده باشد");
   if (input.startsAt.getTime() > Date.now() + 366 * 24 * 60 * 60_000) throw new HttpError(400, "رویداد را حداکثر یک سال جلوتر می‌توان زمان‌بندی کرد");
   if (input.channelId) {
-    const channel = await Channel.findOne({ _id: input.channelId, server: serverId, type: "voice" }, { _id: 1, isPrivate: 1 }).lean();
+    const channel = await Channel.findOne({ _id: input.channelId, server: serverId, type: { $in: VOICE_ROOM_TYPES } }, { _id: 1, isPrivate: 1 }).lean();
     if (!channel) throw new HttpError(400, "کانال صوتی انتخاب‌شده در این سرور نیست");
     // Events are announced to the whole server, so they can't point at a room most of it can't enter.
     if (channel.isPrivate) throw new HttpError(400, "برای رویداد نمی‌توان کانال خصوصی انتخاب کرد");

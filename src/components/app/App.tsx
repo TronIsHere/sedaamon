@@ -19,6 +19,7 @@ import { getSocket } from "@/lib/socket";
 import { useToast } from "@/components/ui/toast";
 import {
   DM_SCOPE,
+  isVoiceRoom,
   type CategoryDTO,
   type ChannelDTO,
   type DmDTO,
@@ -55,7 +56,6 @@ import ServerSettingsDialog from "./ServerSettingsDialog";
 import VoiceBar from "./VoiceBar";
 import VoiceView from "./VoiceView";
 import WelcomeDialog from "./WelcomeDialog";
-import { WatchProvider } from "./WatchTogether";
 import { useNotifySettings } from "./useNotifySettings";
 import { useReadState, type Unread } from "./useReadState";
 import { useVoice } from "./useVoice";
@@ -222,7 +222,7 @@ export default function App({
         markOnline(d.members.map((m) => m.user.id), d.online);
         setVoiceStates((prev) => {
           const next = { ...prev };
-          for (const c of d.channels) if (c.type === "voice") next[c.id] = d.voice[c.id] ?? [];
+          for (const c of d.channels) if (isVoiceRoom(c.type)) next[c.id] = d.voice[c.id] ?? [];
           return next;
         });
         setActiveChannelId((current) => {
@@ -644,7 +644,7 @@ export default function App({
     setActiveChannelId(channel.id);
     lastChannelByServer.current[channel.serverId] = channel.id;
     setSidebarOpen(false);
-    if (channel.type === "voice" && !connection) joinVoice(channel, detail?.server.name ?? "");
+    if (isVoiceRoom(channel.type) && !connection) joinVoice(channel, detail?.server.name ?? "");
   };
 
   const openConnectedChannel = () => {
@@ -677,7 +677,7 @@ export default function App({
     : [];
   const inVoice = currentDetail?.channels.reduce((n, c) => n + (voiceStates[c.id]?.length ?? 0), 0) ?? 0;
 
-  const firstVoice = currentDetail?.channels.find((c) => c.type === "voice");
+  const firstVoice = currentDetail?.channels.find((c) => c.type === "voice") ?? currentDetail?.channels.find((c) => isVoiceRoom(c.type));
   const startCall = () => {
     if (connection) openConnectedChannel();
     else if (firstVoice) selectChannel(firstVoice);
@@ -692,7 +692,6 @@ export default function App({
   return (
     <RoomContext.Provider value={room}>
       <RoomAudioRenderer muted={deafened} />
-      <WatchProvider onNotify={notify}>
         <div className="flex h-dvh overflow-hidden bg-ink-950 pt-safe px-safe md:gap-2 md:p-2">
           <div
             className={cn(
@@ -931,7 +930,7 @@ export default function App({
                   onOpenWelcome={() => setDialog({ kind: "welcome" })}
                   onNotify={notify}
                 />
-              ) : channel?.type === "voice" ? (
+              ) : channel && isVoiceRoom(channel.type) ? (
                 <VoiceView
                   channel={channel}
                   participants={voiceStates[channel.id] ?? []}
@@ -940,6 +939,7 @@ export default function App({
                   settings={settings}
                   onJoin={() => joinVoice(channel, currentDetail?.server.name ?? "")}
                   onLeave={leaveVoice}
+                  onNotify={notify}
                 />
               ) : (
                 <div className="bg-glow flex-1" />
@@ -1105,7 +1105,6 @@ export default function App({
             onNotify={notify}
           />
         )}
-      </WatchProvider>
     </RoomContext.Provider>
   );
 

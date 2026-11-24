@@ -25,6 +25,9 @@ async function main() {
   const { userConnected, userDisconnected } = await import("./src/server/presence");
   const { startEventScheduler } = await import("./src/server/events");
   const { startUploadSweeper } = await import("./src/server/files");
+  const { checkEnv } = await import("./src/server/env");
+
+  checkEnv();
 
   await connectDB();
   await migrateLegacyRoles();

@@ -49,3 +49,7 @@ next-env.d.ts
 
 # Claude Code worktrees (each is its own checkout)
 /.claude/worktrees/
+
+# Local assistant/tooling state and one-off audit exports
+/.claude/
+/seo-audit/

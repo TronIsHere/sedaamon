@@ -7,7 +7,7 @@ import { cn, formatTime } from "@/lib/format";
 import { faDigits, formatJalali } from "@/lib/jalali";
 import { can } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
-import type { ChannelDTO, EventDTO, ServerDTO } from "@/lib/types";
+import { isVoiceRoom, type ChannelDTO, type EventDTO, type ServerDTO } from "@/lib/types";
 import { inputClass, Modal, SubmitButton, useSubmit } from "./Dialogs";
 import Select from "@/components/ui/select";
 import JalaliDatePicker from "./JalaliDatePicker";
@@ -64,7 +64,7 @@ export default function EventsDialog({
 }) {
   const canManage = can(server.standing, "event:manage");
   // Events are for the whole server, so a private room can't be their meeting place.
-  const voice = channels.filter((c) => c.type === "voice" && !c.isPrivate);
+  const voice = channels.filter((c) => isVoiceRoom(c.type) && !c.isPrivate);
   const [view, setView] = useState<View>(events.length || !canManage ? { kind: "list" } : { kind: "form" });
 
   if (view.kind === "form") {

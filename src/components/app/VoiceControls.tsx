@@ -1,13 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useLocalParticipant, useRoomContext } from "@livekit/components-react";
 import { AudioPresets, Track } from "livekit-client";
-import { Film, Gauge, HeadphoneOff, Headphones, Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
+import { Gauge, HeadphoneOff, Headphones, Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
 import { cn } from "@/lib/format";
 import { canShareScreenAudio, micErrorMessage } from "@/lib/voice";
 import type { VoiceSettings } from "./useVoice";
-import { useWatch } from "./WatchTogether";
 
 /** Mic and deafen toggles plus error reporting, shared by the full controls and the mobile voice bar. */
 export function useVoiceToggles(settings: VoiceSettings) {
@@ -52,15 +51,20 @@ export function useVoiceToggles(settings: VoiceSettings) {
   return { ...local, error, attempt, toggleMic, toggleDeafen };
 }
 
-/** Mic, deafen, camera, screen share, low-data and leave buttons for the active voice connection. */
+/**
+ * Mic, deafen, camera, screen share, low-data and leave buttons for the active voice connection.
+ * A cinema keeps to talking: the film is the picture, so there is no camera or screen share there.
+ */
 export default function VoiceControls({
   settings,
   onLeave,
   compact = false,
+  cinema = false,
 }: {
   settings: VoiceSettings;
   onLeave: () => void;
   compact?: boolean;
+  cinema?: boolean;
 }) {
   const {
     localParticipant,
@@ -73,8 +77,6 @@ export default function VoiceControls({
     toggleDeafen,
   } = useVoiceToggles(settings);
   const canShareScreen = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia;
-  const watch = useWatch();
-  const filePicker = useRef<HTMLInputElement>(null);
   const [shareHint, setShareHint] = useState<string>();
 
   /**
@@ -111,12 +113,6 @@ export default function VoiceControls({
       true,
     );
 
-  const pickWatchFile = (file: File | undefined) => {
-    if (filePicker.current) filePicker.current.value = "";
-    if (!file) return;
-    return attempt(async () => (watch.session ? watch.join(file) : await watch.start(file)), "پخش این فایل ممکن نشد");
-  };
-
   const size = compact ? "size-9" : "size-12 sm:size-11";
   const icon = compact ? "size-4" : "size-5";
 
@@ -139,7 +135,7 @@ export default function VoiceControls({
         >
           {settings.deafened ? <HeadphoneOff className={icon} /> : <Headphones className={icon} />}
         </ControlButton>
-        {!compact && (
+        {!compact && !cinema && (
           <>
             <ControlButton
               className={size}
@@ -161,21 +157,6 @@ export default function VoiceControls({
                 <MonitorUp className={icon} />
               </ControlButton>
             )}
-            <input ref={filePicker} type="file" accept="video/*" className="sr-only" tabIndex={-1} onChange={(e) => pickWatchFile(e.target.files?.[0])} />
-            <ControlButton
-              className={size}
-              label={
-                !watch.session
-                  ? "تماشای هم‌زمان فیلم"
-                  : watch.local
-                    ? "پایان تماشای هم‌زمان"
-                    : "انتخاب فایل برای تماشای هم‌زمان"
-              }
-              active={!!watch.local}
-              onClick={() => (watch.local ? watch.stop() : filePicker.current?.click())}
-            >
-              <Film className={icon} />
-            </ControlButton>
             <ControlButton
               className={size}
               label={settings.lowData ? "خاموش کردن حالت کم‌مصرف" : "حالت کم‌مصرف: فقط صدا؛ تصویرها به انتخاب شما"}

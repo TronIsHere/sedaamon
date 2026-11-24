@@ -12,7 +12,7 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/servers/[id]/chan
   const member = await requireMember(id, user._id);
   assertPermission(member, "channel:manage", "فقط مالک و مدیران سرور می‌توانند کانال بسازند");
 
-  const body = channelAccessInput.extend({ name: z.string(), type: z.enum(["text", "voice"]) }).parse(await req.json());
+  const body = channelAccessInput.extend({ name: z.string(), type: z.enum(["text", "voice", "cinema"]) }).parse(await req.json());
   const name = body.name.trim().replace(/\s+/g, "-");
   if (name.length < 1 || name.length > 32) throw new HttpError(400, "نام کانال باید بین ۱ تا ۳۲ حرف باشد");
 

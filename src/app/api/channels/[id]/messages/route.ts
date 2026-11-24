@@ -1,3 +1,4 @@
+import { isVoiceRoom } from "@/lib/types";
 import { isValidObjectId } from "mongoose";
 import { z } from "zod";
 import { MAX_ATTACHMENTS } from "@/lib/attachments";
@@ -59,7 +60,7 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/channels/[id]/mes
   const user = await requireUser();
   const { id } = await ctx.params;
   const scope = await requireMessageScope(id, user._id);
-  if (scope.type === "voice") throw new HttpError(400, "این کانال متنی نیست");
+  if (isVoiceRoom(scope.type)) throw new HttpError(400, "این کانال متنی نیست");
   assertCanWrite(scope.member);
 
   const { content = "", sticker: stickerId, replyTo, mentions: mentionIds = [], attachments: fileIds = [] } = z

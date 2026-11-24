@@ -1,8 +1,8 @@
 import { normalizePhone } from "@/lib/phone";
 
-/** Who may open /admin: the numbers in ADMIN_PHONES (comma separated), or the site owner's when it is unset. */
+/** Who may open /admin: the numbers in ADMIN_PHONES (comma separated). When it is unset, nobody can. */
 const ADMIN_PHONES = new Set(
-  (process.env.ADMIN_PHONES ?? "09306613683")
+  (process.env.ADMIN_PHONES ?? "")
     .split(",")
     .map((p) => normalizePhone(p))
     .filter((p): p is string => !!p),

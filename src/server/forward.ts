@@ -1,5 +1,5 @@
 import type { Types } from "mongoose";
-import type { ForwardTargetsDTO } from "@/lib/types";
+import { isVoiceRoom, type ForwardTargetsDTO } from "@/lib/types";
 import { memberCanView } from "./access";
 import { openDm, listDms } from "./dms";
 import { listFriends } from "./friends";
@@ -38,7 +38,7 @@ export async function forwardMessage(
   if (targetId === sourceId) throw new HttpError(400, "پیام را در همین گفت‌وگو نمی‌توان دوباره فرستاد");
 
   const dest = await requireMessageScope(targetId, user._id);
-  if (dest.type === "voice") throw new HttpError(400, "این کانال متنی نیست");
+  if (isVoiceRoom(dest.type)) throw new HttpError(400, "این کانال متنی نیست");
   assertCanWrite(dest.member);
 
   let forwardedFrom = original.forwardedFrom ?? null;

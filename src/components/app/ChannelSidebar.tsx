@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParticipants } from "@livekit/components-react";
-import { Bell, BellOff, CalendarClock, ChevronDown, FolderPlus, Hash, Link2, Loader2, Lock, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
+import { Bell, BellOff, CalendarClock, ChevronDown, Clapperboard, FolderPlus, Hash, Link2, Loader2, Lock, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { can } from "@/lib/permissions";
@@ -98,12 +98,13 @@ export default function ChannelSidebar({
   const loose = shown.filter((c) => !c.categoryId || !known.has(c.categoryId));
   const text = loose.filter((c) => c.type === "text");
   const voice = loose.filter((c) => c.type === "voice");
+  const cinemas = loose.filter((c) => c.type === "cinema");
   // Without categories the two plain sections are where channels get added, so they stay even when empty.
   const plainSections = !q && !detail?.categories.length;
   const inCategory = (id: string) => {
     const list = shown.filter((c) => c.categoryId === id);
-    // Text channels above voice ones, as in the plain sections.
-    return [...list.filter((c) => c.type === "text"), ...list.filter((c) => c.type === "voice")];
+    // Text channels above voice ones and cinemas, as in the plain sections.
+    return [...list.filter((c) => c.type === "text"), ...list.filter((c) => c.type === "voice"), ...list.filter((c) => c.type === "cinema")];
   };
 
   const renderChannel = (c: ChannelDTO) => {
@@ -123,13 +124,14 @@ export default function ChannelSidebar({
     }
     const connectedHere = connection?.channelId === c.id;
     const people = voiceStates[c.id] ?? [];
+    const RoomIcon = c.type === "cinema" ? Clapperboard : Volume2;
     return (
       <div key={c.id}>
         <ChannelButton active={c.id === activeChannelId} onClick={() => onSelect(c)}>
           {joiningId === c.id ? (
             <Loader2 className="size-4 shrink-0 animate-spin" />
           ) : (
-            <Volume2 className={cn("size-4 shrink-0 opacity-70", connectedHere && "text-online opacity-100")} />
+            <RoomIcon className={cn("size-4 shrink-0 opacity-70", connectedHere && "text-online opacity-100")} />
           )}
           <span className={cn("truncate", people.length > 0 && "font-semibold text-fg")}>{c.name}</span>
           {c.isPrivate && <Lock className="size-3 shrink-0 opacity-60" aria-label="کانال خصوصی" />}
@@ -248,6 +250,16 @@ export default function ChannelSidebar({
                 keepVisible={keepVisible}
                 renderChannel={renderChannel}
                 onAdd={canManage ? () => onAddChannel("voice", null) : undefined}
+              />
+            )}
+            {cinemas.length > 0 && (
+              <Section
+                id={`${detail.server.id}:cinema`}
+                title="سینماها"
+                channels={cinemas}
+                keepVisible={keepVisible}
+                renderChannel={renderChannel}
+                onAdd={canManage ? () => onAddChannel("cinema", null) : undefined}
               />
             )}
             {detail.categories.map((cat) => {

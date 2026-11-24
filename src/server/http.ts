@@ -77,7 +77,7 @@ export async function requireChannelAccess(channelId: string, userId: Types.Obje
 export interface MessageScope {
   /** The server's id, or `DM_SCOPE` for a direct conversation. */
   serverId: string;
-  type: "text" | "voice" | "dm";
+  type: "text" | "voice" | "cinema" | "dm";
   /** Who may see this channel's messages and pings: ids for a private channel, null when the whole server (or conversation) can. */
   audience: ReadonlySet<string> | null;
   /** Only server channels have a Member row; in a conversation everyone is an equal "member". */

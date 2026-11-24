@@ -73,7 +73,7 @@ export const toChannel = (c: {
   _id: Types.ObjectId;
   server: Types.ObjectId;
   name: string;
-  type: "text" | "voice";
+  type: "text" | "voice" | "cinema";
   position: number;
   category?: Types.ObjectId | null;
   isPrivate?: boolean | null;
