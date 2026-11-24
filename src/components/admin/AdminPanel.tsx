@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRight,
   Eye,
@@ -22,19 +22,25 @@ import {
   Volume2,
   X,
   Clapperboard,
+  Download,
+  Film,
+  Loader2,
+  Play,
+  Upload,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { categoryLabel } from "@/lib/discovery";
 import { cn, formatAgo, formatDate, formatDateTime, formatLastSeen } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
-import type { AdminChannelDTO, AdminMessageDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO, MeDTO } from "@/lib/types";
+import { FILM_ACCEPT, filmClock, probeDuration, sizeLabel } from "@/lib/movies";
+import type { AdminChannelDTO, AdminMessageDTO, AdminMoviesDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO, MeDTO, MovieDTO, MovieImportDTO } from "@/lib/types";
 import Avatar, { ServerAvatar } from "@/components/app/Avatar";
 import { Modal, SubmitButton, useSubmit } from "@/components/app/Dialogs";
 import Skeleton from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
 
-type Tab = "overview" | "users" | "servers" | "channels" | "messages";
+type Tab = "overview" | "users" | "servers" | "channels" | "messages" | "films";
 
 const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "overview", label: "نمای کلی", icon: LayoutDashboard },
@@ -42,6 +48,7 @@ const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "servers", label: "سرورها", icon: ServerIcon },
   { id: "channels", label: "کانال‌ها", icon: Hash },
   { id: "messages", label: "پیام‌ها", icon: MessageSquare },
+  { id: "films", label: "فیلم‌ها", icon: Clapperboard },
 ];
 
 const num = new Intl.NumberFormat("fa-IR");
@@ -50,8 +57,11 @@ const fmt = (n: number) => num.format(n);
 /** Narrows the channels and messages tabs to one server or channel, picked from the tab before it. */
 type Scope = { id: string; name: string } | null;
 
-export default function AdminPanel({ me, initialStats }: { me: MeDTO; initialStats: AdminStatsDTO }) {
-  const [tab, setTab] = useState<Tab>("overview");
+export default function AdminPanel({ me, initialStats, initialTab }: { me: MeDTO; initialStats: AdminStatsDTO; initialTab?: string }) {
+  const [tab, setTab] = useState<Tab>(TABS.find((t) => t.id === initialTab)?.id ?? "overview");
+  // An upload keeps going while another tab is open, so the films tab stays mounted once visited.
+  const [filmsOpened, setFilmsOpened] = useState(tab === "films");
+  if (tab === "films" && !filmsOpened) setFilmsOpened(true);
   const [serverScope, setServerScope] = useState<Scope>(null);
   const [channelScope, setChannelScope] = useState<Scope>(null);
 
@@ -69,7 +79,7 @@ export default function AdminPanel({ me, initialStats }: { me: MeDTO; initialSta
           </Link>
           <div className="min-w-0 flex-1 leading-6">
             <h1 className="text-lg font-bold">پنل مدیریت</h1>
-            <p className="truncate text-xs text-muted">مدیریت کاربران، سرورها، کانال‌ها و پیام‌های صدامون</p>
+            <p className="truncate text-xs text-muted">مدیریت کاربران، سرورها، کانال‌ها، پیام‌ها و فیلم‌های صدامون</p>
           </div>
           <Avatar user={me} />
         </div>
@@ -114,6 +124,11 @@ export default function AdminPanel({ me, initialStats }: { me: MeDTO; initialSta
           />
         )}
         {tab === "messages" && <MessagesTab scope={channelScope} onClearScope={() => setChannelScope(null)} />}
+        {filmsOpened && (
+          <div hidden={tab !== "films"}>
+            <FilmsTab />
+          </div>
+        )}
       </main>
     </div>
   );
@@ -829,5 +844,398 @@ function MessagesTab({ scope, onClearScope }: { scope: Scope; onClearScope: () =
         </ConfirmDialog>
       )}
     </section>
+  );
+}
+
+// ---- Films -------------------------------------------------------------------------------------
+
+interface Upload {
+  name: string;
+  loaded: number;
+  total: number;
+  cancel: () => void;
+}
+
+/** The app-wide film library every cinema room plays from: upload, have the server download, rename, remove. */
+function FilmsTab() {
+  const { toast } = useToast();
+  const [q, setQ] = useState("");
+  const [data, setData] = useState<AdminMoviesDTO | null>(null);
+  const [error, setError] = useState<string>();
+  const [nonce, setNonce] = useState(0);
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
+  const picker = useRef<HTMLInputElement>(null);
+  const [upload, setUpload] = useState<Upload | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [previewing, setPreviewing] = useState<MovieDTO>();
+  const [renaming, setRenaming] = useState<MovieDTO>();
+  const [deleting, setDeleting] = useState<MovieDTO>();
+
+  useEffect(() => {
+    let live = true;
+    const timer = setTimeout(
+      () => {
+        api<AdminMoviesDTO>(`/api/movies?q=${encodeURIComponent(q)}`)
+          .then((res) => live && (setData(res), setError(undefined)))
+          .catch((err) => live && setError((err as Error).message));
+      },
+      q ? 250 : 0,
+    );
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [q, nonce]);
+
+  // While the server is downloading something, check on it every couple of seconds.
+  const downloading = !!data?.imports.some((i) => i.status === "downloading" || i.status === "processing");
+  useEffect(() => {
+    if (!downloading) return;
+    const timer = setInterval(reload, 2000);
+    return () => clearInterval(timer);
+  }, [downloading, reload]);
+
+  // Leaving the page would cut an upload short.
+  useEffect(() => {
+    if (!upload) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    addEventListener("beforeunload", warn);
+    return () => removeEventListener("beforeunload", warn);
+  }, [upload]);
+
+  const maxBytes = data?.maxBytes ?? Infinity;
+
+  async function startUpload(file: File) {
+    if (file.size > maxBytes) {
+      toast({ title: `حجم فیلم نباید بیشتر از ${sizeLabel(maxBytes)} باشد`, variant: "error" });
+      return;
+    }
+    let duration: number;
+    try {
+      duration = await probeDuration(file);
+    } catch {
+      toast({ title: "مرورگر این فایل را پخش نمی‌کند. فایل MP4 (H.264 و AAC) یا WebM انتخاب کنید", variant: "error" });
+      return;
+    }
+    const xhr = new XMLHttpRequest();
+    setUpload({ name: file.name, loaded: 0, total: file.size, cancel: () => xhr.abort() });
+    xhr.open("POST", "/api/movies");
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader("X-Movie-Name", encodeURIComponent(file.name));
+    xhr.setRequestHeader("X-Movie-Duration", String(duration));
+    xhr.upload.onprogress = (e) => setUpload((u) => (u ? { ...u, loaded: e.loaded, total: e.total || u.total } : u));
+    xhr.onload = () => {
+      setUpload(null);
+      let body: { movie?: MovieDTO; error?: string } = {};
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {}
+      if (xhr.status >= 200 && xhr.status < 300 && body.movie) {
+        toast({ title: "فیلم به کتابخانه اضافه شد", variant: "success" });
+        reload();
+      } else {
+        toast({ title: body.error ?? (xhr.status === 413 ? "فیلم برای سرور بیش از حد بزرگ است" : "ارسال فیلم ممکن نشد"), variant: "error" });
+      }
+    };
+    xhr.onerror = () => {
+      setUpload(null);
+      toast({ title: "ارسال فیلم قطع شد. اتصال را بررسی کنید و دوباره تلاش کنید", variant: "error" });
+    };
+    xhr.onabort = () => setUpload(null);
+    xhr.send(file);
+  }
+
+  async function dropImport(job: MovieImportDTO) {
+    try {
+      await api(`/api/movies/imports/${job.id}`, { method: "DELETE" });
+      reload();
+    } catch (err) {
+      toast({ title: (err as Error).message, variant: "error" });
+    }
+  }
+
+  const movies = data?.movies ?? null;
+  const percent = upload ? Math.floor((upload.loaded / Math.max(1, upload.total)) * 100) : 0;
+
+  return (
+    <section>
+      <Toolbar q={q} onQ={setQ} placeholder="جست‌وجوی نام فیلم" onReload={reload}>
+        <button type="button" onClick={() => setImporting(true)} className="inline-flex min-h-11 shrink-0 items-center gap-2 rounded-full bg-ink-800 px-4 text-sm font-semibold transition-colors hover:bg-ink-700">
+          <Download className="size-4" />
+          دانلود از لینک
+        </button>
+        <input
+          ref={picker}
+          type="file"
+          accept={FILM_ACCEPT}
+          className="sr-only"
+          tabIndex={-1}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) void startUpload(file);
+          }}
+        />
+        <button type="button" disabled={!!upload} onClick={() => picker.current?.click()} className="btn-primary shrink-0 px-4 text-sm">
+          <Upload className="size-4" />
+          آپلود فیلم
+        </button>
+      </Toolbar>
+
+      <p className="mb-4 text-xs leading-6 text-muted">
+        فیلم‌های این کتابخانه در همهٔ سینماهای صدامون دیده می‌شوند. قالب MP4 (H.264 و AAC) یا WebM
+        {data && <> · حداکثر {sizeLabel(data.maxBytes)}</>}
+      </p>
+
+      {(upload || !!data?.imports.length) && (
+        <ul className="mb-4 space-y-2">
+          {upload && (
+            <ProgressCard
+              icon={<Upload className="size-4" />}
+              title={upload.name}
+              detail={`در حال آپلود · ${sizeLabel(upload.loaded)} از ${sizeLabel(upload.total)} · این صفحه را باز نگه دارید`}
+              percent={percent}
+              action={{ label: "لغو", onClick: upload.cancel }}
+            />
+          )}
+          {data?.imports.map((job) => (
+            <ProgressCard
+              key={job.id}
+              icon={<Download className="size-4" />}
+              title={job.name ?? job.url}
+              detail={importDetail(job)}
+              tone={job.status === "failed" ? "danger" : job.status === "done" ? "accent" : "default"}
+              percent={job.status === "downloading" && job.total ? Math.floor((job.received / job.total) * 100) : job.status === "processing" ? 100 : null}
+              busy={job.status === "downloading" || job.status === "processing"}
+              action={
+                job.status === "processing"
+                  ? undefined
+                  : job.status === "downloading"
+                    ? { label: "لغو", onClick: () => void dropImport(job) }
+                    : { label: "بستن", onClick: () => void dropImport(job) }
+              }
+            />
+          ))}
+        </ul>
+      )}
+
+      <ListState items={movies} error={error} empty={q ? "فیلمی با این نام پیدا نشد" : "کتابخانه خالی است. فیلمی آپلود کنید یا لینکش را بدهید"} cols={4} />
+      {!!movies?.length && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>فیلم</TableHead>
+              <TableHead>مدت</TableHead>
+              <TableHead>حجم</TableHead>
+              <TableHead>افزوده‌شده</TableHead>
+              <TableHead className="w-0">
+                <span className="sr-only">کارها</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {movies.map((m) => (
+              <TableRow key={m.id}>
+                <TableCell>
+                  <div className="flex min-w-44 items-center gap-3">
+                    <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-ink-800 text-accent">
+                      <Film className="size-4" />
+                    </span>
+                    <div className="min-w-0 leading-6">
+                      <p className="truncate font-medium">
+                        <bdi>{m.name}</bdi>
+                      </p>
+                      <p className="text-xs text-muted">{m.contentType === "video/webm" ? "WebM" : "MP4"}</p>
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell className="whitespace-nowrap tabular-nums">{filmClock(m.duration)}</TableCell>
+                <TableCell className="whitespace-nowrap">{sizeLabel(m.size)}</TableCell>
+                <TableCell>
+                  <div className="leading-6 whitespace-nowrap">
+                    <p>{formatDate(m.createdAt)}</p>
+                    {m.uploadedBy && <p className="text-xs text-muted">{m.uploadedBy.name}</p>}
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className="flex justify-end gap-1">
+                    <IconButton label="پیش‌نمایش" onClick={() => setPreviewing(m)}>
+                      <Play className="size-4" />
+                    </IconButton>
+                    <IconButton label="تغییر نام" onClick={() => setRenaming(m)}>
+                      <Pencil className="size-4" />
+                    </IconButton>
+                    <IconButton label="حذف فیلم" danger onClick={() => setDeleting(m)}>
+                      <Trash2 className="size-4" />
+                    </IconButton>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+
+      {importing && (
+        <ImportDialog
+          onClose={() => setImporting(false)}
+          onStarted={() => {
+            toast({ title: "دانلود روی سرور شروع شد", variant: "success" });
+            reload();
+          }}
+        />
+      )}
+      {previewing && (
+        <Modal title={previewing.name} wide onClose={() => setPreviewing(undefined)}>
+          <video src={previewing.url} controls autoPlay playsInline className="aspect-video w-full rounded-2xl bg-black" />
+          <p className="mt-3 text-xs leading-6 text-muted">اگر تصویر یا صدا پخش نشد، قالب فیلم با مرورگرها جور نیست. نسخهٔ MP4 (H.264 و AAC) آن را جایگزین کنید.</p>
+        </Modal>
+      )}
+      {renaming && (
+        <RenameDialog
+          title="تغییر نام فیلم"
+          initial={renaming.name}
+          maxLength={120}
+          onClose={() => setRenaming(undefined)}
+          onSave={async (name) => {
+            await api(`/api/movies/${renaming.id}`, { method: "PATCH", body: { name } });
+            reload();
+            toast({ title: "نام فیلم عوض شد", variant: "success" });
+          }}
+        />
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title="حذف فیلم"
+          action="حذف از کتابخانه"
+          onClose={() => setDeleting(undefined)}
+          onConfirm={async () => {
+            await api(`/api/movies/${deleting.id}`, { method: "DELETE" });
+            setData((d) => (d ? { ...d, movies: d.movies.filter((x) => x.id !== deleting.id) } : d));
+            toast({ title: "فیلم حذف شد", variant: "success" });
+          }}
+        >
+          <p>
+            فیلم <b>{deleting.name}</b> از کتابخانه و از روی سرور پاک می‌شود. اگر در سینمایی در حال پخش باشد، پخشش همان‌جا تمام می‌شود.
+          </p>
+          <p className="text-muted">این کار برگشت‌پذیر نیست.</p>
+        </ConfirmDialog>
+      )}
+    </section>
+  );
+}
+
+function importDetail(job: MovieImportDTO) {
+  switch (job.status) {
+    case "downloading":
+      return job.total ? `دانلود روی سرور · ${sizeLabel(job.received)} از ${sizeLabel(job.total)}` : `دانلود روی سرور · ${sizeLabel(job.received)}`;
+    case "processing":
+      return "بررسی و ذخیرهٔ فیلم…";
+    case "done":
+      return "به کتابخانه اضافه شد";
+    case "canceled":
+      return "لغو شد";
+    case "failed":
+      return job.error ?? "دانلود نشد";
+  }
+}
+
+function ProgressCard({
+  icon,
+  title,
+  detail,
+  percent,
+  busy = true,
+  tone = "default",
+  action,
+}: {
+  icon: ReactNode;
+  title: string;
+  detail: string;
+  /** null while the size isn't known: the bar then just pulses. */
+  percent: number | null;
+  busy?: boolean;
+  tone?: "default" | "accent" | "danger";
+  action?: { label: string; onClick: () => void };
+}) {
+  return (
+    <li className="rounded-2xl border border-line bg-ink-900 p-3">
+      <div className="flex items-center gap-3">
+        <span
+          className={cn(
+            "grid size-9 shrink-0 place-items-center rounded-xl",
+            tone === "danger" ? "bg-danger-strong/15 text-danger" : tone === "accent" ? "bg-accent-strong/15 text-accent" : "bg-ink-800 text-muted",
+          )}
+        >
+          {busy ? <Loader2 className="size-4 animate-spin" /> : icon}
+        </span>
+        <div className="min-w-0 flex-1 leading-6">
+          <p className="truncate text-sm font-medium">
+            <bdi>{title}</bdi>
+          </p>
+          <p className={cn("text-xs", tone === "danger" ? "text-danger" : "text-muted")}>{detail}</p>
+        </div>
+        {busy && percent !== null && <span className="shrink-0 text-xs text-muted tabular-nums">{toPersianDigits(percent)}٪</span>}
+        {action && (
+          <button type="button" onClick={action.onClick} className="shrink-0 rounded-full px-3 py-1.5 text-xs text-muted transition-colors hover:bg-ink-800 hover:text-fg">
+            {action.label}
+          </button>
+        )}
+      </div>
+      {busy && (
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-700" dir="ltr">
+          <div
+            className={cn("h-full rounded-full bg-accent-strong transition-[width]", percent === null && "w-1/3 animate-pulse")}
+            style={percent === null ? undefined : { width: `${percent}%` }}
+          />
+        </div>
+      )}
+    </li>
+  );
+}
+
+function ImportDialog({ onClose, onStarted }: { onClose: () => void; onStarted: () => void }) {
+  const [url, setUrl] = useState("");
+  const [name, setName] = useState("");
+  const { busy, error, submit } = useSubmit(
+    () => api("/api/movies/imports", { method: "POST", body: { url: url.trim(), name: name.trim() || null } }),
+    () => {
+      onStarted();
+      onClose();
+    },
+  );
+  return (
+    <Modal title="دانلود فیلم از لینک" onClose={onClose}>
+      <form onSubmit={submit} className="space-y-4">
+        <label className="block space-y-1.5">
+          <span className="text-sm font-medium">لینک فیلم</span>
+          <input
+            className="field"
+            dir="ltr"
+            type="url"
+            inputMode="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://example.com/film.mp4"
+            required
+            autoFocus
+          />
+          <span className="block text-xs leading-6 text-muted">
+            لینک باید مستقیم به خود فایل MP4 یا WebM باشد، نه به صفحه‌ای که فیلم در آن است. سرور فیلم را خودش دانلود می‌کند و لازم نیست این صفحه باز بماند.
+          </span>
+        </label>
+        <label className="block space-y-1.5">
+          <span className="text-sm font-medium">
+            نام فیلم <span className="font-normal text-muted">(اختیاری)</span>
+          </span>
+          <input className="field" dir="auto" value={name} onChange={(e) => setName(e.target.value)} maxLength={120} placeholder="اگر خالی بماند، از نام فایل برداشته می‌شود" />
+        </label>
+        {error && <p className="text-sm text-danger">{error}</p>}
+        <SubmitButton busy={busy} disabled={!url.trim()}>
+          <Download className="size-4" />
+          شروع دانلود
+        </SubmitButton>
+      </form>
+    </Modal>
   );
 }

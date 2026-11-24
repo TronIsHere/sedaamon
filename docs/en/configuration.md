@@ -66,11 +66,12 @@ Uploads (pictures, files, voice messages) go to local disk unless `S3_ENDPOINT` 
 | `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | | Credentials. Required with `S3_ENDPOINT`. |
 | `S3_REGION` | `us-east-1` | |
 | `S3_FORCE_PATH_STYLE` | `true` | Path-style URLs (`endpoint/bucket/key`), which most non-AWS providers need. |
-| `MOVIE_MAX_MB` | `4096` | Largest film a cinema room's library accepts, in MB (at most 5120). Films arrive in `UPLOAD_DIR/.incoming` before they move to storage, so leave that much free disk even with S3. |
+| `MOVIE_MAX_MB` | `4096` | Largest film the cinema library accepts, in MB (at most 5120). Films arrive in `UPLOAD_DIR/.incoming` before they move to storage, so leave that much free disk even with S3. |
+| `MOVIE_IMPORT_ALLOW_PRIVATE` | off | Set to `true` to let "download from link" fetch from private and local addresses (LAN, `localhost`). Off by default, so nobody can point the server at things only it can reach. |
 
 The bucket can (and should) stay private: files are served through the app, which applies each channel's access rules. Limits: 5 MB per file, 10 files per message. A file uploaded but never attached to a message is removed after 24 hours.
 
-Cinema rooms all play from one app-wide film library (MP4 or WebM; H.264 + AAC MP4 plays in every browser). Only the site admin (`ADMIN_PHONES`) adds or removes films, from inside any cinema room; everyone else can browse the library and watch. A reverse proxy in front of the app must let these uploads through: [`deploy/nginx.conf`](../../deploy/nginx.conf) raises the body limit for `/api/movies` only; Caddy has no limit by default.
+Cinema rooms all play from one app-wide film library (MP4 or WebM; H.264 + AAC MP4 plays in every browser). Only the site admin (`ADMIN_PHONES`) manages it, from the **Films** tab of `/admin`: upload a file, or paste a direct link to an MP4/WebM file and the server downloads it in the background (up to three at a time; a restart drops downloads still running). The server reads a downloaded film's length from the file itself, so no ffmpeg is needed. Everyone else browses the library and watches from inside any cinema room. A reverse proxy in front of the app must let these uploads through: [`deploy/nginx.conf`](../../deploy/nginx.conf) raises the body limit for `/api/movies` only; Caddy has no limit by default.
 
 ## Startup checks
 

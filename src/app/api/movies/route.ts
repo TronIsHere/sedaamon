@@ -1,9 +1,16 @@
-import { handle, HttpError, requireUser } from "@/server/http";
-import { canManageLibrary, receiveMovie } from "@/server/cinema";
+import { handle, requireAdmin } from "@/server/http";
+import { adminLibrary, receiveMovie } from "@/server/cinema";
+import { listImports } from "@/server/movieImport";
+import type { AdminMoviesDTO } from "@/lib/types";
+
+/** The film library for the admin panel (`?q=` narrows it by name), with the downloads still running. */
+export const GET = handle(async (req): Promise<AdminMoviesDTO> => {
+  await requireAdmin();
+  return { ...(await adminLibrary(new URL(req.url).searchParams.get("q") ?? "")), imports: listImports() };
+});
 
 /** Adds a film to the app-wide library. Site admin only. The body is the file itself; see receiveMovie for the headers. */
 export const POST = handle(async (req) => {
-  const user = await requireUser();
-  if (!canManageLibrary(user)) throw new HttpError(403, "فقط مدیر صدامون می‌تواند فیلم اضافه کند");
+  const user = await requireAdmin();
   return receiveMovie(req, user._id);
 });

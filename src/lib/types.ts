@@ -344,7 +344,7 @@ export interface MovieDTO {
   id: string;
   name: string;
   size: number;
-  /** Seconds, as measured by the browser that uploaded it. */
+  /** Seconds: measured by the uploader's browser, or read from the file when the server downloaded it. */
   duration: number;
   contentType: string;
   uploadedBy: UserDTO | null;
@@ -373,10 +373,31 @@ export interface CinemaDTO {
   state: CinemaStateDTO;
   /** The server's clock (ms) when this was sent, to line up with the local one. */
   serverNow: number;
-  /** Whether this person is the site admin (ADMIN_PHONES), the only one who adds films to the library and removes them. */
+  /** Whether this person is the site admin (ADMIN_PHONES), who manages the library from the admin panel. */
   canManage: boolean;
+}
+
+/** The film library as the admin panel sees it. */
+export interface AdminMoviesDTO {
+  movies: MovieDTO[];
   /** The largest film the server accepts, in bytes. */
   maxBytes: number;
+  /** Films the server is downloading from a link, or recently finished or failed to. */
+  imports: MovieImportDTO[];
+}
+
+/** A film the server is fetching from a link the admin gave it. */
+export interface MovieImportDTO {
+  id: string;
+  url: string;
+  /** The name it will get in the library, once known. */
+  name: string | null;
+  status: "downloading" | "processing" | "done" | "failed" | "canceled";
+  /** Bytes downloaded so far, and the total when the other server said. */
+  received: number;
+  total: number | null;
+  error: string | null;
+  createdAt: string;
 }
 
 /** Where a message can be forwarded to: text channels the person can write in, and people they may message. */

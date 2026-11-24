@@ -12,16 +12,17 @@ import {
   Minimize,
   Pause,
   Play,
+  Settings2,
   Square,
-  Trash2,
-  Upload,
   Volume1,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
+import { filmClock } from "@/lib/movies";
 import { toPersianDigits } from "@/lib/phone";
 import { getSocket } from "@/lib/socket";
 import type { CinemaDTO, CinemaStateDTO, MovieDTO, VoiceParticipant } from "@/lib/types";
@@ -39,19 +40,6 @@ const DRIFT = 1;
 /** After someone else's change we line up more tightly. */
 const SNAP = 0.35;
 const VOLUME_KEY = "sedaamon:cinema-volume";
-
-const clock = (seconds: number) => {
-  const s = Math.max(0, Math.floor(seconds));
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  const two = (n: number) => String(n).padStart(2, "0");
-  return toPersianDigits(h ? `${h}:${two(m)}:${two(s % 60)}` : `${m}:${two(s % 60)}`);
-};
-
-const sizeLabel = (bytes: number) =>
-  bytes >= 1024 ** 3
-    ? `${toPersianDigits((bytes / 1024 ** 3).toFixed(1))} گیگابایت`
-    : `${toPersianDigits(Math.max(1, Math.round(bytes / 1024 ** 2)))} مگابایت`;
 
 /** Where the film should be right now, by the room's clock. */
 const expectedAt = (s: CinemaStateDTO, serverNow: number, duration: number) =>
@@ -142,81 +130,6 @@ function useCinema(channelId: string, onNotify: (message: string) => void) {
   return { data, setData, failed, load, control, serverNow };
 }
 
-interface UploadProgress {
-  name: string;
-  loaded: number;
-  total: number;
-  cancel: () => void;
-}
-
-/** Reads the film's length the way the <video> element will, which also proves this browser can play it. */
-function probeDuration(file: File) {
-  return new Promise<number>((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const video = document.createElement("video");
-    video.preload = "metadata";
-    video.muted = true;
-    const done = () => URL.revokeObjectURL(url);
-    video.onloadedmetadata = () => {
-      done();
-      if (Number.isFinite(video.duration) && video.duration > 0) resolve(video.duration);
-      else reject(new Error("unknown length"));
-    };
-    video.onerror = () => {
-      done();
-      reject(new Error("unsupported"));
-    };
-    video.src = url;
-  });
-}
-
-/** Sends a film as the raw request body, reporting progress (fetch can't report upload progress). */
-function useMovieUpload(maxBytes: number, onNotify: (message: string) => void, onDone: (movies: MovieDTO[]) => void) {
-  const [upload, setUpload] = useState<UploadProgress | null>(null);
-
-  const start = async (file: File) => {
-    if (file.size > maxBytes) {
-      onNotify(`حجم فیلم نباید بیشتر از ${sizeLabel(maxBytes)} باشد`);
-      return;
-    }
-    let duration: number;
-    try {
-      duration = await probeDuration(file);
-    } catch {
-      onNotify("مرورگر این فایل را پخش نمی‌کند. فایل MP4 (H.264 و AAC) یا WebM انتخاب کنید");
-      return;
-    }
-    const xhr = new XMLHttpRequest();
-    setUpload({ name: file.name, loaded: 0, total: file.size, cancel: () => xhr.abort() });
-    xhr.open("POST", "/api/movies");
-    xhr.setRequestHeader("Content-Type", "application/octet-stream");
-    xhr.setRequestHeader("X-Movie-Name", encodeURIComponent(file.name));
-    xhr.setRequestHeader("X-Movie-Duration", String(duration));
-    xhr.upload.onprogress = (e) => setUpload((u) => (u ? { ...u, loaded: e.loaded, total: e.total || u.total } : u));
-    xhr.onload = () => {
-      setUpload(null);
-      let body: { movies?: MovieDTO[]; error?: string } = {};
-      try {
-        body = JSON.parse(xhr.responseText);
-      } catch {}
-      if (xhr.status >= 200 && xhr.status < 300 && body.movies) {
-        onDone(body.movies);
-        onNotify("فیلم به کتابخانه اضافه شد");
-      } else {
-        onNotify(body.error ?? (xhr.status === 413 ? "فیلم برای سرور بیش از حد بزرگ است" : "ارسال فیلم ممکن نشد"));
-      }
-    };
-    xhr.onerror = () => {
-      setUpload(null);
-      onNotify("ارسال فیلم قطع شد. اتصال را بررسی کنید و دوباره تلاش کنید");
-    };
-    xhr.onabort = () => setUpload(null);
-    xhr.send(file);
-  };
-
-  return { upload, start };
-}
-
 /** The cinema while connected: the film (or the library) on top, everyone in the room in a row under it. */
 export function CinemaStage({
   channelId,
@@ -227,11 +140,8 @@ export function CinemaStage({
   participants: VoiceParticipant[];
   onNotify: (message: string) => void;
 }) {
-  const { data, setData, failed, load, control, serverNow } = useCinema(channelId, onNotify);
+  const { data, failed, load, control, serverNow } = useCinema(channelId, onNotify);
   const [libraryOpen, setLibraryOpen] = useState(false);
-  const uploader = useMovieUpload(data?.maxBytes ?? Infinity, onNotify, (movies) =>
-    setData((d) => (d ? { ...d, movies } : d)),
-  );
 
   if (!data) {
     return (
@@ -266,15 +176,13 @@ export function CinemaStage({
             onLibrary={() => setLibraryOpen(true)}
           />
         ) : (
-          <LibraryPanel data={data} uploader={uploader} onPick={pick} onDelete={deleteMovie} />
+          <LibraryPanel data={data} onPick={pick} />
         )}
         {movie && libraryOpen && (
           <div className="absolute inset-0 z-20 flex flex-col rounded-3xl bg-ink-900">
             <LibraryPanel
               data={data}
-              uploader={uploader}
               onPick={pick}
-              onDelete={deleteMovie}
               onClose={() => setLibraryOpen(false)}
               onStop={() => {
                 setLibraryOpen(false);
@@ -287,15 +195,6 @@ export function CinemaStage({
       <PeopleRow known={participants} />
     </div>
   );
-
-  async function deleteMovie(m: MovieDTO) {
-    try {
-      await api(`/api/movies/${m.id}`, { method: "DELETE" });
-      setData((d) => (d ? { ...d, movies: d.movies.filter((x) => x.id !== m.id) } : d));
-    } catch (err) {
-      onNotify((err as Error).message);
-    }
-  }
 }
 
 /** Everyone in the call, as a row of chips that light up while they talk. */
@@ -327,23 +226,15 @@ export function PeopleRow({ known }: { known: VoiceParticipant[] }) {
 
 function LibraryPanel({
   data,
-  uploader,
   onPick,
-  onDelete,
   onClose,
   onStop,
 }: {
   data: CinemaDTO;
-  uploader: ReturnType<typeof useMovieUpload>;
   onPick: (m: MovieDTO) => void;
-  onDelete: (m: MovieDTO) => void;
   onClose?: () => void;
   onStop?: () => void;
 }) {
-  const picker = useRef<HTMLInputElement>(null);
-  const [confirming, setConfirming] = useState<string | null>(null);
-  const { upload } = uploader;
-
   return (
     <section className="flex min-h-0 flex-1 flex-col gap-3 rounded-3xl bg-ink-900/80 p-3 ring-1 ring-line sm:p-4" aria-label="کتابخانهٔ فیلم">
       <header className="flex items-center gap-2">
@@ -354,25 +245,15 @@ function LibraryPanel({
             {data.movies.length ? `${toPersianDigits(data.movies.length)} فیلم · فیلمی را برای پخش برای همه انتخاب کنید` : "هنوز فیلمی اضافه نشده است"}
           </p>
         </div>
-        {data.canManage && !upload && (
-          <>
-            <input
-              ref={picker}
-              type="file"
-              accept="video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov,.mkv"
-              className="sr-only"
-              tabIndex={-1}
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (file) void uploader.start(file);
-              }}
-            />
-            <button onClick={() => picker.current?.click()} className="btn-primary shrink-0 px-4 text-sm">
-              <Upload className="size-4" />
-              افزودن فیلم
-            </button>
-          </>
+        {data.canManage && (
+          <Link
+            href="/admin?tab=films"
+            target="_blank"
+            className="flex shrink-0 items-center gap-1.5 rounded-full px-3 py-2 text-xs text-muted transition hover:bg-ink-800 hover:text-fg"
+          >
+            <Settings2 className="size-3.5" />
+            مدیریت فیلم‌ها
+          </Link>
         )}
         {onStop && (
           <button
@@ -390,27 +271,6 @@ function LibraryPanel({
         )}
       </header>
 
-      {upload && (
-        <div className="rounded-2xl bg-ink-850 p-3 ring-1 ring-line">
-          <div className="flex items-center gap-2 text-sm">
-            <Loader2 className="size-4 shrink-0 animate-spin text-accent" />
-            <span className="min-w-0 flex-1 truncate">
-              <bdi>{upload.name}</bdi>
-            </span>
-            <span className="shrink-0 text-xs text-muted tabular-nums">
-              {toPersianDigits(Math.floor((upload.loaded / Math.max(1, upload.total)) * 100))}٪
-            </span>
-            <button onClick={upload.cancel} className="shrink-0 rounded-full px-2.5 py-1 text-xs text-muted hover:bg-ink-800 hover:text-danger">
-              لغو
-            </button>
-          </div>
-          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-700" dir="ltr">
-            <div className="h-full rounded-full bg-accent-strong transition-[width]" style={{ width: `${(upload.loaded / Math.max(1, upload.total)) * 100}%` }} />
-          </div>
-          <p className="mt-2 text-xs text-muted">تا پایان ارسال این صفحه را باز نگه دارید.</p>
-        </div>
-      )}
-
       {data.movies.length ? (
         <ul className="scrollbar-thin -mx-1 min-h-0 flex-1 space-y-1 overflow-y-auto px-1">
           {data.movies.map((m) => {
@@ -424,37 +284,8 @@ function LibraryPanel({
                   <p className="truncate text-sm font-semibold">
                     <bdi>{m.name}</bdi>
                   </p>
-                  <p className="truncate text-xs text-muted">
-                    {clock(m.duration)} · {sizeLabel(m.size)}
-                    {m.uploadedBy && ` · ${m.uploadedBy.name}`}
-                  </p>
+                  <p className="truncate text-xs text-muted">{filmClock(m.duration)}</p>
                 </div>
-                {data.canManage &&
-                  (confirming === m.id ? (
-                    <span className="flex shrink-0 items-center gap-1">
-                      <button
-                        onClick={() => {
-                          setConfirming(null);
-                          onDelete(m);
-                        }}
-                        className="rounded-full bg-danger-strong px-3 py-1.5 text-xs font-semibold text-white"
-                      >
-                        حذف شود
-                      </button>
-                      <button onClick={() => setConfirming(null)} className="rounded-full px-2.5 py-1.5 text-xs text-muted hover:bg-ink-700">
-                        نه
-                      </button>
-                    </span>
-                  ) : (
-                    <button
-                      onClick={() => setConfirming(m.id)}
-                      aria-label={`حذف ${m.name}`}
-                      title="حذف از کتابخانه"
-                      className="grid size-9 shrink-0 place-items-center rounded-full text-muted transition hover:bg-ink-700 hover:text-danger"
-                    >
-                      <Trash2 className="size-4" />
-                    </button>
-                  ))}
                 <button
                   onClick={() => onPick(m)}
                   disabled={current}
@@ -473,9 +304,15 @@ function LibraryPanel({
             <Clapperboard className="mx-auto size-12 text-accent" />
             <p className="mt-4 text-sm leading-7 text-muted">
               {data.canManage
-                ? "یک فیلم MP4 یا WebM اضافه کنید تا همه با هم تماشا کنید. فیلم روی سرور می‌ماند و هر کس بیاید می‌تواند همراه شود."
+                ? "کتابخانه خالی است. از بخش «فیلم‌ها» در پنل مدیریت، فیلم آپلود کنید یا لینکش را بدهید تا سرور دانلودش کند."
                 : "هنوز فیلمی در کتابخانه نیست. فیلم‌ها را مدیر صدامون اضافه می‌کند."}
             </p>
+            {data.canManage && (
+              <Link href="/admin?tab=films" target="_blank" className="btn-primary mt-4 inline-flex px-5 text-sm">
+                <Settings2 className="size-4" />
+                رفتن به پنل مدیریت
+              </Link>
+            )}
           </div>
         </div>
       )}
@@ -629,7 +466,7 @@ function Player({
             <bdi>{movie.name}</bdi>
           </p>
           <p className="truncate text-xs text-muted">
-            {clock(movie.duration)}
+            {filmClock(movie.duration)}
             {state.by && ` · ${state.by} ${state.playing ? "پخش کرد" : "نگه داشت"}`}
           </p>
         </div>
@@ -725,7 +562,7 @@ function Player({
               {state.playing ? <Pause className="size-5" /> : <Play className="size-5" />}
             </PlayerButton>
             <span className="px-1 text-xs tabular-nums text-white/85">
-              {clock(shown)} / {clock(movie.duration)}
+              {filmClock(shown)} / {filmClock(movie.duration)}
             </span>
             <span className="ms-auto flex items-center gap-1">
               <PlayerButton label={muted ? "صدادار کردن فیلم" : "بی‌صدا کردن فیلم (فقط برای شما)"} onClick={() => setMuted(!muted)}>
