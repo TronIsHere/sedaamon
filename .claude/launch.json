@@ -44,22 +44,6 @@
         "PORT": "3100"
       },
       "port": 3100
-    },
-    {
-      "name": "subtest",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev"
-      ],
-      "port": 3107,
-      "env": {
-        "PORT": "3107",
-        "MONGODB_URI": "mongodb://127.0.0.1:27017/sedaamon_subtest",
-        "UPLOAD_DIR": "/private/tmp/claude-501/-Users-erwin--claude-spares-spare-nOKtKh/40c68eb2-45f5-424e-8e7d-d7563015f51d/scratchpad/uploads",
-        "ADMIN_PHONES": "09120000001",
-        "SMS_PROVIDER": "console"
-      }
     }
   ]
 }
