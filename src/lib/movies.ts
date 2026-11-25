@@ -1,4 +1,5 @@
 import { toPersianDigits } from "./phone";
+import type { SubtitleDTO } from "./types";
 
 /** A film position or length as 1:23:45 (or 23:45), in Persian digits. */
 export function filmClock(seconds: number) {
@@ -13,6 +14,30 @@ export const sizeLabel = (bytes: number) =>
   bytes >= 1024 ** 3
     ? `${toPersianDigits((bytes / 1024 ** 3).toFixed(1))} گیگابایت`
     : `${toPersianDigits(Math.max(1, Math.round(bytes / 1024 ** 2)))} مگابایت`;
+
+const languages = new Intl.DisplayNames(["fa"], { type: "language", fallback: "none" });
+
+function languageName(lang: string) {
+  if (lang === "und") return null;
+  try {
+    return languages.of(lang) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** What to call each subtitle track: its language, plus something to tell apart two in the same language. */
+export function subtitleLabels(tracks: SubtitleDTO[]): string[] {
+  const names = tracks.map((t) => languageName(t.lang) ?? (t.title || "زیرنویس"));
+  return tracks.map((t, i) => {
+    const twins = names.filter((n) => n === names[i]).length > 1;
+    const note = t.forced ? "فقط بخش‌های خارجی" : twins ? (t.title && t.title !== names[i] ? t.title : toPersianDigits(names.slice(0, i + 1).filter((n) => n === names[i]).length)) : "";
+    return note ? `${names[i]} (${note})` : names[i];
+  });
+}
+
+/** Whether a film's subtitles start out shown: a Persian one does, others wait to be picked. */
+export const defaultSubtitle = (tracks: SubtitleDTO[]) => tracks.find((t) => t.lang.split("-")[0] === "fa" && !t.forced) ?? null;
 
 /** Reads the film's length the way the <video> element will, which also proves this browser can play it. */
 export function probeDuration(file: File) {

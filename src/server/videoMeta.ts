@@ -58,7 +58,7 @@ export async function mp4Duration(file: FileHandle, size: number): Promise<numbe
 }
 
 /** An EBML variable-length integer: element ids keep their length marker, sizes drop it. */
-function vint(buf: Buffer, at: number, keepMarker: boolean) {
+export function vint(buf: Buffer, at: number, keepMarker: boolean) {
   const first = buf[at];
   if (first === undefined || first === 0) return null;
   const length = Math.clz32(first) - 23;

@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParticipants } from "@livekit/components-react";
 import {
+  Captions,
+  CaptionsOff,
+  Check,
   Clapperboard,
   Film,
   Library,
@@ -22,10 +25,10 @@ import {
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
-import { filmClock } from "@/lib/movies";
+import { defaultSubtitle, filmClock, subtitleLabels } from "@/lib/movies";
 import { toPersianDigits } from "@/lib/phone";
 import { getSocket } from "@/lib/socket";
-import type { CinemaDTO, CinemaStateDTO, MovieDTO, VoiceParticipant } from "@/lib/types";
+import type { CinemaDTO, CinemaStateDTO, MovieDTO, SubtitleDTO, VoiceParticipant } from "@/lib/types";
 import Avatar from "./Avatar";
 
 /*
@@ -40,6 +43,8 @@ const DRIFT = 1;
 /** After someone else's change we line up more tightly. */
 const SNAP = 0.35;
 const VOLUME_KEY = "sedaamon:cinema-volume";
+/** "off", or the language last picked. Subtitles are each viewer's own choice, like the volume. */
+const SUBTITLE_KEY = "sedaamon:cinema-subtitle";
 
 /** Where the film should be right now, by the room's clock. */
 const expectedAt = (s: CinemaStateDTO, serverNow: number, duration: number) =>
@@ -321,6 +326,58 @@ function LibraryPanel({
   );
 }
 
+/** The subtitle this viewer wants for a film: what they last picked, or else the Persian one. */
+function preferredSubtitle(tracks: SubtitleDTO[]) {
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(SUBTITLE_KEY);
+  } catch {}
+  if (saved === "off") return null;
+  return tracks.find((t) => t.lang === saved) ?? defaultSubtitle(tracks);
+}
+
+/**
+ * The lines on screen now. The browser loads the track and keeps its time (a hidden <track> reports which cues are
+ * active); we draw them, so Persian reads right to left and the text stays clear of our controls.
+ */
+function useSubtitle(video: React.RefObject<HTMLVideoElement | null>, id: string | null) {
+  const [lines, setLines] = useState<string[]>([]);
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+    const el = v.querySelector("track");
+    const ours = el?.track ?? null;
+    // Safari can turn on the film's own embedded track, which would show every line twice.
+    const quiet = () => {
+      for (const t of Array.from(v.textTracks)) if (t !== ours && t.mode !== "disabled") t.mode = "disabled";
+    };
+    const update = () =>
+      setLines(Array.from(ours?.activeCues ?? []).map((c) => (c as VTTCue).getCueAsHTML().textContent ?? ""));
+    // An iPhone's own full-screen player shows only the video, so there the browser has to draw the subtitle.
+    const native = () => ours && (ours.mode = "showing");
+    const back = () => ours && (ours.mode = "hidden");
+
+    quiet();
+    back();
+    v.textTracks.addEventListener("addtrack", quiet);
+    v.textTracks.addEventListener("change", quiet);
+    v.addEventListener("webkitbeginfullscreen", native);
+    v.addEventListener("webkitendfullscreen", back);
+    ours?.addEventListener("cuechange", update);
+    el?.addEventListener("load", update);
+    return () => {
+      v.textTracks.removeEventListener("addtrack", quiet);
+      v.textTracks.removeEventListener("change", quiet);
+      v.removeEventListener("webkitbeginfullscreen", native);
+      v.removeEventListener("webkitendfullscreen", back);
+      ours?.removeEventListener("cuechange", update);
+      el?.removeEventListener("load", update);
+      setLines([]);
+    };
+  }, [video, id]);
+  return lines;
+}
+
 /**
  * The film, with our own controls instead of the browser's: a click here is sent to the room and the video then
  * follows the room's clock, so there is no telling apart our own events from the ones we caused by following.
@@ -359,6 +416,21 @@ function Player({
   const idle = useRef<number | undefined>(undefined);
   /** How the last press came in: a tap on a phone only brings up the controls, a mouse click plays or pauses. */
   const pointer = useRef("mouse");
+
+  /** The subtitle picked during this film: an id, null for none, undefined until something is picked. */
+  const [picked, setPicked] = useState<string | null | undefined>(undefined);
+  const [subsOpen, setSubsOpen] = useState(false);
+  const subtitles = movie.subtitles;
+  const subtitle = picked === undefined ? preferredSubtitle(subtitles) : (subtitles.find((s) => s.id === picked) ?? null);
+  const lines = useSubtitle(video, subtitle?.id ?? null);
+  const labels = subtitleLabels(subtitles);
+  const pickSubtitle = (s: SubtitleDTO | null) => {
+    setPicked(s?.id ?? null);
+    setSubsOpen(false);
+    try {
+      localStorage.setItem(SUBTITLE_KEY, s?.lang ?? "off");
+    } catch {}
+  };
 
   const expected = useCallback(() => expectedAt(state, serverNow(), movie.duration), [state, serverNow, movie.duration]);
   const ended = state.playing ? time >= movie.duration - 0.25 : state.position >= movie.duration - 0.5;
@@ -415,7 +487,7 @@ function Player({
     idle.current = window.setTimeout(() => setChrome(false), 3000);
   };
   useEffect(() => () => window.clearTimeout(idle.current), []);
-  const showChrome = chrome || !state.playing || scrub !== null || blocked;
+  const showChrome = chrome || !state.playing || scrub !== null || blocked || subsOpen;
 
   const current = () => video.current?.currentTime ?? expected();
   const togglePlay = () => {
@@ -506,7 +578,28 @@ function Player({
           onPlaying={() => setWaiting(false)}
           onCanPlay={() => setWaiting(false)}
           onError={() => setProblem("این فیلم در مرورگر شما پخش نمی‌شود. فیلم را با MP4 (H.264 و AAC) دوباره اضافه کنید")}
-        />
+        >
+          {subtitle && <track key={subtitle.id} kind="subtitles" src={subtitle.url} srcLang={subtitle.lang} label={labels[subtitles.indexOf(subtitle)]} />}
+        </video>
+
+        {!!lines.length && (
+          <div
+            className={cn(
+              "@container pointer-events-none absolute inset-x-0 flex flex-col items-center gap-1 px-4 text-center transition-[bottom] duration-300",
+              showChrome ? "bottom-24" : "bottom-[4%]",
+            )}
+          >
+            {lines.map((line, i) => (
+              <p
+                key={i}
+                dir={/[\u0590-\u08ff]/.test(line) ? "rtl" : "ltr"}
+                className="max-w-[90cqw] text-[clamp(1rem,3cqw,2.75rem)] leading-[1.75] font-semibold whitespace-pre-line text-white [text-shadow:0_1px_3px_#000]"
+              >
+                <span className="rounded-md bg-black/60 box-decoration-clone px-[0.4em] py-[0.15em]">{line}</span>
+              </p>
+            ))}
+          </div>
+        )}
 
         {waiting && state.playing && !problem && (
           <Loader2 className="pointer-events-none absolute size-10 animate-spin text-white/80" />
@@ -534,6 +627,33 @@ function Player({
               برای همراه شدن با پخش بزنید
             </span>
           </button>
+        )}
+
+        {subsOpen && (
+          <>
+            <button tabIndex={-1} aria-label="بستن" onClick={() => setSubsOpen(false)} className="absolute inset-0 z-20 cursor-default" />
+            <ul
+              dir="rtl"
+              aria-label="زیرنویس"
+              className="scrollbar-thin absolute right-3 bottom-16 z-30 max-h-[60%] min-w-44 max-w-[80%] overflow-y-auto rounded-2xl bg-ink-800 p-1.5 text-sm text-fg shadow-xl ring-1 ring-line"
+            >
+              {[null, ...subtitles].map((s, i) => {
+                const on = s?.id === subtitle?.id;
+                return (
+                  <li key={s?.id ?? "off"}>
+                    <button
+                      aria-pressed={on}
+                      onClick={() => pickSubtitle(s)}
+                      className={cn("flex w-full items-center gap-2 rounded-xl px-3 py-2 text-start transition hover:bg-ink-700", on && "text-accent")}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{s ? labels[i - 1] : "بدون زیرنویس"}</span>
+                      {on && <Check className="size-4 shrink-0" />}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
 
         {/* A gradient rather than a blur: a backdrop-filter over a playing video makes Safari and Chrome drop the video layer. */}
@@ -565,6 +685,14 @@ function Player({
               {filmClock(shown)} / {filmClock(movie.duration)}
             </span>
             <span className="ms-auto flex items-center gap-1">
+              {!!subtitles.length && (
+                <PlayerButton
+                  label={subtitles.length > 1 ? "زیرنویس (فقط برای شما)" : subtitle ? "خاموش کردن زیرنویس (فقط برای شما)" : "روشن کردن زیرنویس (فقط برای شما)"}
+                  onClick={() => (subtitles.length > 1 ? setSubsOpen(!subsOpen) : pickSubtitle(subtitle ? null : subtitles[0]))}
+                >
+                  {subtitle ? <Captions className="size-5" /> : <CaptionsOff className="size-5" />}
+                </PlayerButton>
+              )}
               <PlayerButton label={muted ? "صدادار کردن فیلم" : "بی‌صدا کردن فیلم (فقط برای شما)"} onClick={() => setMuted(!muted)}>
                 <VolumeIcon className="size-5" />
               </PlayerButton>

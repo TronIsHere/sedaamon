@@ -6,7 +6,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { isValidObjectId, type Types } from "mongoose";
 import { z } from "zod";
-import type { CinemaDTO, CinemaStateDTO, MovieDTO } from "@/lib/types";
+import type { CinemaDTO, CinemaStateDTO, MovieDTO, SubtitleDTO } from "@/lib/types";
 import { channelAudience } from "./access";
 import { isAdminPhone } from "./admins";
 import { connectDB } from "./db";
@@ -15,6 +15,7 @@ import { Channel, Movie, User } from "./models";
 import { emitToAudience, realtime } from "./realtime";
 import { toUser } from "./serialize";
 import { getStorage, incomingDir } from "./storage";
+import { extractSubtitles, fileSource, SUBTITLES_VERSION, toVtt, type ByteSource, type SubtitleTrack } from "./subtitles";
 import { videoDuration } from "./videoMeta";
 
 /** The largest film accepted, in bytes. MOVIE_MAX_MB raises or lowers it; S3 caps a single upload at 5 GB. */
@@ -40,7 +41,10 @@ type MovieDoc = {
   size: number;
   duration: number;
   createdAt?: Date;
+  subtitles?: SubtitleDoc[] | null;
 };
+
+type SubtitleDoc = { _id?: Types.ObjectId; key: string; lang?: string | null; title?: string | null; forced?: boolean | null; cues?: number | null };
 
 export function assertCinema(channel: { type: string }) {
   if (channel.type !== "cinema") throw new HttpError(400, "این کانال سینما نیست");
@@ -72,7 +76,22 @@ async function toMovies(docs: MovieDoc[]): Promise<MovieDTO[]> {
     uploadedBy: (m.uploader && users.get(String(m.uploader))) || null,
     createdAt: (m.createdAt ?? new Date()).toISOString(),
     url: `/api/movies/${m._id}`,
+    subtitles: toSubtitles(m),
   }));
+}
+
+/** Persian first, whole dialogues before partial ones, then the fullest. */
+function toSubtitles(m: MovieDoc): SubtitleDTO[] {
+  const rank = (s: SubtitleDoc) => (s.lang?.split("-")[0] === "fa" ? 0 : 2) + (s.forced ? 1 : 0);
+  return [...(m.subtitles ?? [])]
+    .sort((a, b) => rank(a) - rank(b) || (b.cues ?? 0) - (a.cues ?? 0))
+    .map((s) => ({
+      id: String(s._id),
+      lang: s.lang || "und",
+      title: s.title ?? "",
+      forced: !!s.forced,
+      url: `/api/movies/${m._id}/subtitles/${s._id}`,
+    }));
 }
 
 /** The one library every cinema room plays from. Only the site admin (ADMIN_PHONES) adds and removes films, from /admin. */
@@ -84,6 +103,7 @@ const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 export async function adminLibrary(q: string) {
   const filter = q.trim() ? { name: new RegExp(escapeRegex(q.trim()), "i") } : {};
   const docs = (await Movie.find(filter).sort({ createdAt: -1 }).lean()) as MovieDoc[];
+  void readMissingSubtitles();
   return { movies: await toMovies(docs), maxBytes: movieMaxBytes() };
 }
 
@@ -100,6 +120,7 @@ export async function renameMovie(movieId: string, raw: string) {
 export const canManageLibrary = (user: { phone: string }) => isAdminPhone(user.phone);
 
 export async function cinemaSnapshot(channel: ChannelDoc, user: { phone: string }): Promise<CinemaDTO> {
+  void readMissingSubtitles();
   return {
     movies: await library(),
     state: stateOf(channel),
@@ -211,12 +232,18 @@ export async function finalizeMovie(input: { temp: string; size: number; name: s
   const handle = await open(input.temp, "r");
   let contentType: string | null;
   let duration = input.duration;
+  let tracks: SubtitleTrack[] | null = null;
   try {
     const head = Buffer.alloc(16);
     await handle.read(head, 0, 16, 0);
     contentType = sniffVideo(head);
     if (!contentType) throw new HttpError(400, UNSUPPORTED_FORMAT);
     duration ??= await videoDuration(handle, input.size, contentType);
+    // A film is worth having even when its subtitles can't be read.
+    tracks = await extractSubtitles(fileSource(handle, input.size), contentType).catch((err) => {
+      console.error("[cinema] could not read subtitles of", input.name, err);
+      return null;
+    });
   } finally {
     await handle.close();
   }
@@ -234,9 +261,92 @@ export async function finalizeMovie(input: { temp: string; size: number; name: s
     contentType,
     size: input.size,
     duration: Math.round(duration * 10) / 10,
+    subtitles: await storeSubtitles(key, tracks ?? []),
+    subtitlesVersion: tracks ? SUBTITLES_VERSION : 0,
   });
   await broadcastLibrary();
   return (await toMovies([movie.toObject() as MovieDoc]))[0];
+}
+
+/* ---------- Subtitles inside the film ---------- */
+
+async function storeSubtitles(movieKey: string, tracks: SubtitleTrack[]): Promise<SubtitleDoc[]> {
+  const out: SubtitleDoc[] = [];
+  for (const t of tracks) {
+    const key = `${movieKey}.${randomUUID()}.vtt`;
+    try {
+      await getStorage().put(key, Buffer.from(toVtt(t.cues)), "text/vtt");
+    } catch (err) {
+      console.error("[cinema] could not store subtitles", err);
+      continue;
+    }
+    out.push({ key, lang: t.lang, title: t.title, forced: t.forced, cues: t.cues.length });
+  }
+  return out;
+}
+
+const storedSource = (key: string, size: number): ByteSource => ({
+  size,
+  async read(position, length) {
+    const end = Math.min(size, position + length) - 1;
+    if (end < position) return Buffer.alloc(0);
+    const body = await getStorage().stream(key, { start: position, end });
+    if (!body) throw new Error(`missing film ${key}`);
+    return Buffer.from(await new Response(body).arrayBuffer());
+  },
+});
+
+const scan = globalThis as unknown as { __subtitleScan?: { running: boolean; failed: Set<string> } };
+
+/**
+ * Reads the subtitles of films that were added before the app could, one at a time in the background.
+ * Started whenever someone opens a cinema or the admin panel; there is nothing to do after the first pass.
+ */
+async function readMissingSubtitles() {
+  const state = (scan.__subtitleScan ??= { running: false, failed: new Set() });
+  if (state.running) return;
+  state.running = true;
+  try {
+    // $not also matches films with no version at all.
+    const films = await Movie.find({ subtitlesVersion: { $not: { $gte: SUBTITLES_VERSION } } }, { key: 1, size: 1, contentType: 1, name: 1, subtitles: 1 }).lean();
+    for (const film of films) {
+      const id = String(film._id);
+      if (state.failed.has(id)) continue;
+      try {
+        const tracks = await extractSubtitles(storedSource(film.key, film.size), film.contentType);
+        const subtitles = await storeSubtitles(film.key, tracks);
+        const saved = await Movie.findByIdAndUpdate(film._id, { subtitles, subtitlesVersion: SUBTITLES_VERSION });
+        // Replaced ones go, and so do these if the film was deleted meanwhile.
+        const stale = (saved ? film.subtitles : subtitles).map((s) => s.key);
+        await getStorage().remove(stale).catch(() => {});
+        if (saved && subtitles.length) await broadcastLibrary();
+      } catch (err) {
+        // Not tried again until the server restarts.
+        state.failed.add(id);
+        console.error("[cinema] could not read subtitles of", film.name, err);
+      }
+    }
+  } catch (err) {
+    console.error("[cinema] subtitle scan failed", err);
+  } finally {
+    state.running = false;
+  }
+}
+
+/** One of a film's subtitles, as WebVTT. */
+export async function streamSubtitle(movieId: string, subtitleId: string) {
+  if (!isValidObjectId(movieId) || !isValidObjectId(subtitleId)) throw new HttpError(404, "زیرنویس پیدا نشد");
+  const movie = await Movie.findById(movieId, { subtitles: 1 }).lean();
+  const subtitle = movie?.subtitles?.find((s) => String((s as SubtitleDoc)._id) === subtitleId);
+  const body = subtitle && (await getStorage().get(subtitle.key));
+  if (!body) throw new HttpError(404, "زیرنویس پیدا نشد");
+  return new Response(new Uint8Array(body), {
+    headers: {
+      "Content-Type": "text/vtt; charset=utf-8",
+      "Cache-Control": "private, max-age=31536000, immutable",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 
 /**
@@ -286,7 +396,7 @@ export async function deleteMovie(movieId: string) {
   if (!isValidObjectId(movieId)) throw new HttpError(404, "فیلم پیدا نشد");
   const movie = await Movie.findByIdAndDelete(movieId).lean();
   if (!movie) throw new HttpError(404, "فیلم پیدا نشد");
-  await getStorage().remove([movie.key]).catch((err) => console.error("[cinema] could not remove", err));
+  await getStorage().remove([movie.key, ...(movie.subtitles ?? []).map((s) => s.key)]).catch((err) => console.error("[cinema] could not remove", err));
   const showing = (await Channel.find({ type: "cinema", "cinema.movie": movie._id }).lean()) as ChannelDoc[];
   for (const channel of showing) await saveState(channel, { movie: null, playing: false, position: 0, by: null });
   await broadcastLibrary();

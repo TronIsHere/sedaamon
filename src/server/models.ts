@@ -146,6 +146,18 @@ const movieSchema = new Schema(
     contentType: { type: String, required: true },
     size: { type: Number, required: true },
     duration: { type: Number, required: true },
+    // The subtitle tracks found inside the film, as WebVTT files in storage.
+    subtitles: [
+      {
+        key: { type: String, required: true },
+        lang: { type: String, default: "und" },
+        title: { type: String, default: "" },
+        forced: { type: Boolean, default: false },
+        cues: { type: Number, default: 0 },
+      },
+    ],
+    // Which SUBTITLES_VERSION looked for them; films added before that existed have 0.
+    subtitlesVersion: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

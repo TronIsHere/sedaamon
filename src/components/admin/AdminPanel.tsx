@@ -32,7 +32,7 @@ import { api } from "@/lib/api";
 import { categoryLabel } from "@/lib/discovery";
 import { cn, formatAgo, formatDate, formatDateTime, formatLastSeen } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
-import { FILM_ACCEPT, filmClock, probeDuration, sizeLabel } from "@/lib/movies";
+import { defaultSubtitle, FILM_ACCEPT, filmClock, probeDuration, sizeLabel, subtitleLabels } from "@/lib/movies";
 import type { AdminChannelDTO, AdminMessageDTO, AdminMoviesDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO, MeDTO, MovieDTO, MovieImportDTO } from "@/lib/types";
 import Avatar, { ServerAvatar } from "@/components/app/Avatar";
 import { Modal, SubmitButton, useSubmit } from "@/components/app/Dialogs";
@@ -1045,7 +1045,10 @@ function FilmsTab() {
                       <p className="truncate font-medium">
                         <bdi>{m.name}</bdi>
                       </p>
-                      <p className="text-xs text-muted">{m.contentType === "video/webm" ? "WebM" : "MP4"}</p>
+                      <p className="text-xs text-muted">
+                        {m.contentType === "video/webm" ? "WebM" : "MP4"}
+                        {!!m.subtitles.length && ` · زیرنویس ${subtitleLabels(m.subtitles).join("، ")}`}
+                      </p>
                     </div>
                   </div>
                 </TableCell>
@@ -1087,7 +1090,11 @@ function FilmsTab() {
       )}
       {previewing && (
         <Modal title={previewing.name} wide onClose={() => setPreviewing(undefined)}>
-          <video src={previewing.url} controls autoPlay playsInline className="aspect-video w-full rounded-2xl bg-black" />
+          <video src={previewing.url} controls autoPlay playsInline className="aspect-video w-full rounded-2xl bg-black">
+            {previewing.subtitles.map((s, i) => (
+              <track key={s.id} kind="subtitles" src={s.url} srcLang={s.lang} label={subtitleLabels(previewing.subtitles)[i]} default={s === defaultSubtitle(previewing.subtitles)} />
+            ))}
+          </video>
           <p className="mt-3 text-xs leading-6 text-muted">اگر تصویر یا صدا پخش نشد، قالب فیلم با مرورگرها جور نیست. نسخهٔ MP4 (H.264 و AAC) آن را جایگزین کنید.</p>
         </Modal>
       )}
