@@ -351,19 +351,21 @@ export interface MovieDTO {
   createdAt: string;
   /** Streams the film (byte ranges, so it can be seeked). */
   url: string;
-  /** The subtitles found inside the film, the one to show first at the front. */
+  /** The subtitles found inside the film or added to it, the one to show first at the front. */
   subtitles: SubtitleDTO[];
 }
 
-/** A subtitle track taken out of a film, served as WebVTT. */
+/** A subtitle of a film, served as WebVTT. */
 export interface SubtitleDTO {
   id: string;
   /** BCP 47, or "und" when the language is unknown. */
   lang: string;
-  /** The name the film's file gives it; often empty. */
+  /** The name the film's file gives it (often empty), or the name of the file it was added from. */
   title: string;
   /** Only the lines in another language, or signs; not the whole dialogue. */
   forced: boolean;
+  /** Added by the admin as a file, rather than found inside the film. */
+  uploaded: boolean;
   url: string;
 }
 

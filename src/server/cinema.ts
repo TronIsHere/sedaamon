@@ -15,7 +15,7 @@ import { Channel, Movie, User } from "./models";
 import { emitToAudience, realtime } from "./realtime";
 import { toUser } from "./serialize";
 import { getStorage, incomingDir } from "./storage";
-import { extractSubtitles, fileSource, SUBTITLES_VERSION, toVtt, type ByteSource, type SubtitleTrack } from "./subtitles";
+import { extractSubtitles, fileSource, parseSubtitleFile, SUBTITLES_VERSION, toVtt, type ByteSource, type SubtitleTrack } from "./subtitles";
 import { videoDuration } from "./videoMeta";
 
 /** The largest film accepted, in bytes. MOVIE_MAX_MB raises or lowers it; S3 caps a single upload at 5 GB. */
@@ -44,7 +44,7 @@ type MovieDoc = {
   subtitles?: SubtitleDoc[] | null;
 };
 
-type SubtitleDoc = { _id?: Types.ObjectId; key: string; lang?: string | null; title?: string | null; forced?: boolean | null; cues?: number | null };
+type SubtitleDoc = { _id?: Types.ObjectId; key: string; lang?: string | null; title?: string | null; forced?: boolean | null; cues?: number | null; uploaded?: boolean | null };
 
 export function assertCinema(channel: { type: string }) {
   if (channel.type !== "cinema") throw new HttpError(400, "این کانال سینما نیست");
@@ -80,16 +80,17 @@ async function toMovies(docs: MovieDoc[]): Promise<MovieDTO[]> {
   }));
 }
 
-/** Persian first, whole dialogues before partial ones, then the fullest. */
+/** Persian first, whole dialogues before partial ones, files the admin added before the film's own, then the fullest. */
 function toSubtitles(m: MovieDoc): SubtitleDTO[] {
   const rank = (s: SubtitleDoc) => (s.lang?.split("-")[0] === "fa" ? 0 : 2) + (s.forced ? 1 : 0);
   return [...(m.subtitles ?? [])]
-    .sort((a, b) => rank(a) - rank(b) || (b.cues ?? 0) - (a.cues ?? 0))
+    .sort((a, b) => rank(a) - rank(b) || Number(!!b.uploaded) - Number(!!a.uploaded) || (b.cues ?? 0) - (a.cues ?? 0))
     .map((s) => ({
       id: String(s._id),
       lang: s.lang || "und",
       title: s.title ?? "",
       forced: !!s.forced,
+      uploaded: !!s.uploaded,
       url: `/api/movies/${m._id}/subtitles/${s._id}`,
     }));
 }
@@ -308,16 +309,18 @@ async function readMissingSubtitles() {
   state.running = true;
   try {
     // $not also matches films with no version at all.
-    const films = await Movie.find({ subtitlesVersion: { $not: { $gte: SUBTITLES_VERSION } } }, { key: 1, size: 1, contentType: 1, name: 1, subtitles: 1 }).lean();
+    const films = await Movie.find({ subtitlesVersion: { $not: { $gte: SUBTITLES_VERSION } } }, { key: 1, size: 1, contentType: 1, name: 1 }).lean();
     for (const film of films) {
       const id = String(film._id);
       if (state.failed.has(id)) continue;
       try {
         const tracks = await extractSubtitles(storedSource(film.key, film.size), film.contentType);
         const subtitles = await storeSubtitles(film.key, tracks);
-        const saved = await Movie.findByIdAndUpdate(film._id, { subtitles, subtitlesVersion: SUBTITLES_VERSION });
+        // The film's own tracks are replaced; files the admin added stay, even ones added during the scan.
+        const before = await Movie.findByIdAndUpdate(film._id, { $pull: { subtitles: { uploaded: { $ne: true } } } }, { returnDocument: "before" }).lean();
+        const saved = await Movie.findByIdAndUpdate(film._id, { $push: { subtitles: { $each: subtitles } }, subtitlesVersion: SUBTITLES_VERSION });
         // Replaced ones go, and so do these if the film was deleted meanwhile.
-        const stale = (saved ? film.subtitles : subtitles).map((s) => s.key);
+        const stale = (saved ? (before?.subtitles ?? []).filter((s) => !s.uploaded) : subtitles).map((s) => s.key);
         await getStorage().remove(stale).catch(() => {});
         if (saved && subtitles.length) await broadcastLibrary();
       } catch (err) {
@@ -331,6 +334,72 @@ async function readMissingSubtitles() {
   } finally {
     state.running = false;
   }
+}
+
+/* ---------- Subtitles added as files ---------- */
+
+const SUBTITLE_MAX_BYTES = 4 * 1024 * 1024;
+const MAX_SUBTITLES = 40;
+
+async function readCapped(req: Request, max: number, message: string) {
+  if (Number(req.headers.get("content-length") ?? 0) > max) throw new HttpError(413, message);
+  const parts: Uint8Array[] = [];
+  let size = 0;
+  if (req.body) {
+    for await (const part of Readable.fromWeb(req.body as import("node:stream/web").ReadableStream)) {
+      size += part.length;
+      if (size > max) throw new HttpError(413, message);
+      parts.push(part);
+    }
+  }
+  return Buffer.concat(parts);
+}
+
+async function movieDTO(doc: unknown) {
+  return (await toMovies([doc as MovieDoc]))[0];
+}
+
+/** Adds a subtitle file (the raw request body, its name URI-encoded in `X-Subtitle-Name`) to a film. */
+export async function addSubtitle(req: Request, movieId: string) {
+  if (!isValidObjectId(movieId)) throw new HttpError(404, "فیلم پیدا نشد");
+  const film = await Movie.findById(movieId, { key: 1, subtitles: 1 }).lean();
+  if (!film) throw new HttpError(404, "فیلم پیدا نشد");
+  if ((film.subtitles?.length ?? 0) >= MAX_SUBTITLES) throw new HttpError(400, "این فیلم زیرنویس‌های زیادی دارد. اول چند تا را حذف کنید");
+
+  let name = req.headers.get("x-subtitle-name") ?? "";
+  try {
+    name = decodeURIComponent(name);
+  } catch {}
+  const body = await readCapped(req, SUBTITLE_MAX_BYTES, "حجم فایل زیرنویس نباید بیشتر از ۴ مگابایت باشد");
+  // Subtitle sites hand out archives; "PK" starts a zip and "Rar!" a rar.
+  if (/^(PK\u0003\u0004|Rar!)/.test(body.toString("latin1", 0, 4))) throw new HttpError(400, "این فایل فشرده است. آن را باز کنید و خود فایل زیرنویس را بفرستید");
+  const track = parseSubtitleFile(body, name.split(/[\\/]/).pop() ?? "");
+  if (!track) throw new HttpError(400, "در این فایل زیرنویسی پیدا نشد. فایل SRT، VTT یا ASS لازم است");
+
+  const [stored] = await storeSubtitles(film.key, [track]);
+  if (!stored) throw new HttpError(500, "زیرنویس ذخیره نشد. دوباره تلاش کنید");
+  const movie = await Movie.findByIdAndUpdate(movieId, { $push: { subtitles: { ...stored, uploaded: true } } }, { returnDocument: "after" }).lean();
+  if (!movie) {
+    await getStorage().remove([stored.key]).catch(() => {});
+    throw new HttpError(404, "فیلم پیدا نشد");
+  }
+  await broadcastLibrary();
+  return movieDTO(movie);
+}
+
+/** Takes a subtitle off a film, whether it was added as a file or came with it. */
+export async function deleteSubtitle(movieId: string, subtitleId: string) {
+  if (!isValidObjectId(movieId) || !isValidObjectId(subtitleId)) throw new HttpError(404, "زیرنویس پیدا نشد");
+  const before = await Movie.findOneAndUpdate(
+    { _id: movieId, "subtitles._id": subtitleId },
+    { $pull: { subtitles: { _id: subtitleId } } },
+    { returnDocument: "before" },
+  ).lean();
+  const gone = before?.subtitles?.find((s) => String((s as SubtitleDoc)._id) === subtitleId);
+  if (!before || !gone) throw new HttpError(404, "زیرنویس پیدا نشد");
+  await getStorage().remove([gone.key]).catch((err) => console.error("[cinema] could not remove", err));
+  await broadcastLibrary();
+  return movieDTO({ ...before, subtitles: before.subtitles.filter((s) => s !== gone) });
 }
 
 /** One of a film's subtitles, as WebVTT. */

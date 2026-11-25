@@ -146,7 +146,7 @@ const movieSchema = new Schema(
     contentType: { type: String, required: true },
     size: { type: Number, required: true },
     duration: { type: Number, required: true },
-    // The subtitle tracks found inside the film, as WebVTT files in storage.
+    // The subtitle tracks found inside the film and the ones added to it, as WebVTT files in storage.
     subtitles: [
       {
         key: { type: String, required: true },
@@ -154,6 +154,8 @@ const movieSchema = new Schema(
         title: { type: String, default: "" },
         forced: { type: Boolean, default: false },
         cues: { type: Number, default: 0 },
+        // A file the admin added, rather than a track from inside the film.
+        uploaded: { type: Boolean, default: false },
       },
     ],
     // Which SUBTITLES_VERSION looked for them; films added before that existed have 0.

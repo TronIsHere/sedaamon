@@ -1,6 +1,6 @@
 import { deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
-import { extractSubtitles, toVtt, trackLanguage, type ByteSource } from "./subtitles";
+import { extractSubtitles, parseSubtitleFile, toVtt, trackLanguage, type ByteSource } from "./subtitles";
 
 const source = (buf: Buffer): ByteSource => ({ size: buf.length, read: async (p, n) => buf.subarray(p, p + n) });
 
@@ -152,6 +152,51 @@ describe("subtitles in MP4", () => {
   it("survives broken tables", async () => {
     expect(await read(mp4([timed("سلام")], { broken: true }), "video/mp4")).toBeInstanceOf(Array);
     expect(await read(box("ftyp", Buffer.alloc(8)), "video/mp4")).toEqual([]);
+  });
+});
+
+describe("subtitle files", () => {
+  const srt = "1\r\n00:00:01,000 --> 00:00:02,500\r\nسلام\r\n<i>خوبی؟</i>\r\n\r\n2\r\n00:01:00,5 --> 00:01:02,000 X1:1\r\nخداحافظ\r\n";
+  const expected = [
+    { start: 1, end: 2.5, text: "سلام\nخوبی؟" },
+    { start: 60.5, end: 62, text: "خداحافظ" },
+  ];
+
+  it("reads SRT in UTF-8 and UTF-16", () => {
+    expect(parseSubtitleFile(Buffer.from(srt), "Film.2024.srt")).toEqual({ lang: "fa", title: "Film 2024", forced: false, cues: expected });
+    expect(parseSubtitleFile(Buffer.from(`\ufeff${srt}`, "utf16le"), "a.srt")?.cues).toEqual(expected);
+    expect(parseSubtitleFile(Buffer.from(`\ufeff${srt}`), "a.srt")?.cues).toEqual(expected);
+  });
+
+  it("reads SRT in windows-1256", () => {
+    const salam = Buffer.from([0xd3, 0xe1, 0xc7, 0xe3]);
+    const file = Buffer.concat([Buffer.from("1\n00:00:01,000 --> 00:00:02,000\n"), salam]);
+    expect(parseSubtitleFile(file, "a.srt")).toMatchObject({ lang: "fa", cues: [{ text: "سلام" }] });
+  });
+
+  it("stays UTF-8 when a character is damaged", () => {
+    const text = "1\n00:00:01,000 --> 00:00:02,000\n" + "سلام دوست من ".repeat(20);
+    const file = Buffer.concat([Buffer.from(text), Buffer.from([0xd8])]);
+    expect(parseSubtitleFile(file, "a.srt")?.cues[0].text.startsWith("سلام دوست من")).toBe(true);
+  });
+
+  it("copes with missing numbers, missing blank lines and blank lines inside a cue", () => {
+    const file = "1\n00:00:01,000 --> 00:00:02,000\none\n2\n00:00:03,000 --> 00:00:04,000\ntwo\n\nstill two\n\n00:00:05,000 --> 00:00:06,000\nthree\n";
+    expect(parseSubtitleFile(Buffer.from(file), "a.en.srt")).toMatchObject({ lang: "en", cues: [{ text: "one" }, { text: "two\nstill two" }, { text: "three" }] });
+  });
+
+  it("reads WebVTT with notes, ids and settings", () => {
+    const file = "WEBVTT\n\nNOTE hi\n\nintro\n00:01.000 --> 00:02.000 line:0\n<v Ali>a &amp; b\n\nnext\n01:00:00.000 --> 01:00:01.000\nc\n";
+    expect(parseSubtitleFile(Buffer.from(file), "a.vtt")?.cues).toEqual([{ start: 1, end: 2, text: "a & b" }, { start: 3600, end: 3601, text: "c" }]);
+  });
+
+  it("reads ASS by its own field order", () => {
+    const file = "[Script Info]\nTitle: x\n[Events]\nFormat: Layer, Start, End, Style, Text\nComment: 0,0:00:00.00,0:00:01.00,D,no\nDialogue: 0,0:00:01.50,0:00:02.00,D,{\\i1}سلام, چطوری؟\\Nخوبم\n";
+    expect(parseSubtitleFile(Buffer.from(file), "a.ass")).toMatchObject({ lang: "fa", cues: [{ start: 1.5, end: 2, text: "سلام, چطوری؟\nخوبم" }] });
+  });
+
+  it("finds nothing in other files", () => {
+    for (const junk of ["", "hello", "<html></html>", "\0\0\0\x18ftypisom"]) expect(parseSubtitleFile(Buffer.from(junk), "a.srt")).toBeNull();
   });
 });
 

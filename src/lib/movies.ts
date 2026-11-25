@@ -60,4 +60,7 @@ export function probeDuration(file: File) {
   });
 }
 
+/** Phones know no type for .srt, so the picker there has to allow text and unknown files too. */
+export const SUBTITLE_ACCEPT = ".srt,.vtt,.ass,.ssa,application/x-subrip,text/*,application/octet-stream";
+
 export const FILM_ACCEPT = "video/mp4,video/webm,video/quicktime,.mp4,.m4v,.webm,.mov,.mkv";

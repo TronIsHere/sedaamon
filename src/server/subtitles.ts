@@ -505,7 +505,10 @@ function assText(line: string) {
     at = line.indexOf(",", at) + 1;
     if (!at) return "";
   }
-  const text = line.slice(at);
+  return assWords(line.slice(at));
+}
+
+function assWords(text: string) {
   // {\p1} switches to drawing shapes: what follows is coordinates, not words.
   if (/\{[^}]*\\p[1-9]/.test(text)) return "";
   return text.replace(/\\[Nn]/g, "\n").replace(/\\h/g, " ");
@@ -535,8 +538,15 @@ function toText(format: Format, raw: string) {
 function finish(track: { format: Format; declared: string; title: string; forced: boolean; cues: RawCue[] }): SubtitleTrack[] {
   const unwrap = track.format === "tx3g" ? tx3g : track.format === "wvtt" ? wvtt : (b: Buffer) => b;
   const texts = decode(track.cues.map((c) => unwrap(c.data)));
-  const lines = track.cues
-    .map((c, i) => ({ start: Math.max(0, c.start), end: c.end, text: toText(track.format, texts[i]) }))
+  const cues = tidy(track.cues.map((c, i) => ({ start: c.start, end: c.end, text: toText(track.format, texts[i]) })));
+  if (!cues.length) return [];
+  return [{ lang: trackLanguage(track.declared, cues), title: track.title.slice(0, 80), forced: track.forced, cues }];
+}
+
+/** In order, each with an end, without empty or repeated lines. */
+function tidy(raw: { start: number; end: number | null; text: string }[]): Cue[] {
+  const lines = raw
+    .map((c) => ({ ...c, start: Math.max(0, c.start) }))
     .filter((c) => c.text)
     .sort((a, b) => a.start - b.start);
   const cues: Cue[] = [];
@@ -550,8 +560,92 @@ function finish(track: { format: Format; declared: string; title: string; forced
     seen.add(key);
     cues.push({ start: c.start, end, text: c.text });
   });
-  if (!cues.length) return [];
-  return [{ lang: trackLanguage(track.declared, cues), title: track.title.slice(0, 80), forced: track.forced, cues }];
+  return cues;
+}
+
+/* ---------- Subtitle files ---------- */
+
+/**
+ * A whole file's text. Persian .srt files come in UTF-8, UTF-16 and, very often, windows-1256.
+ * A UTF-8 file with the odd damaged character is still UTF-8.
+ */
+export function decodeFile(buf: Buffer) {
+  if (buf[0] === 0xff && buf[1] === 0xfe) return new TextDecoder("utf-16le").decode(buf);
+  if (buf[0] === 0xfe && buf[1] === 0xff) return new TextDecoder("utf-16be").decode(buf);
+  const text = new TextDecoder("utf-8").decode(buf);
+  const broken = text.match(/\ufffd/g)?.length ?? 0;
+  if (broken <= text.length * 0.01) return text;
+  const arabic = new TextDecoder("windows-1256").decode(buf);
+  const letters = arabic.match(/[\u0621-\u06d3]/g)?.length ?? 0;
+  const latin = arabic.match(/[A-Za-z]/g)?.length ?? 0;
+  return letters > latin ? arabic : new TextDecoder("windows-1252").decode(buf);
+}
+
+const TIMING = /^\s*(?:(\d+):)?(\d{1,2}):(\d{1,2})[.,](\d{1,3})\s*-->\s*(?:(\d+):)?(\d{1,2}):(\d{1,2})[.,](\d{1,3})/;
+
+const clock = (h: string | undefined, m: string, s: string, fraction: string) =>
+  Number(h ?? 0) * 3600 + Number(m) * 60 + Number(s) + Number(fraction.padEnd(3, "0")) / 1000;
+
+function srtLines(text: string, vtt: boolean) {
+  const rows = text.split("\n");
+  const out: { start: number; end: number; text: string }[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const t = TIMING.exec(rows[i]);
+    if (!t) continue;
+    const body: string[] = [];
+    // Some SRT files have blank lines inside a line of dialogue, others none between two; the next timing is what ends it.
+    while (i + 1 < rows.length && !TIMING.test(rows[i + 1])) {
+      if (vtt && !rows[i + 1].trim()) break;
+      body.push(rows[++i]);
+    }
+    // The number of the next line, right above its timing.
+    if (!vtt && i + 1 < rows.length && /^\s*[\d\u06f0-\u06f9]+\s*$/.test(body.at(-1) ?? "")) body.pop();
+    out.push({ start: clock(t[1], t[2], t[3], t[4]), end: clock(t[5], t[6], t[7], t[8]), text: toText(vtt ? "webvtt" : "text", body.join("\n")) });
+  }
+  return out;
+}
+
+function assLines(text: string) {
+  // Where each field is; the text always comes last and may have commas of its own.
+  let fields = ["layer", "start", "end", "style", "name", "marginl", "marginr", "marginv", "effect", "text"];
+  let events = false;
+  const out: { start: number; end: number; text: string }[] = [];
+  const time = (s: string | undefined) => {
+    const m = /^\s*(\d+):(\d{1,2}):(\d{1,2})[.:](\d{1,3})/.exec(s ?? "");
+    return m ? clock(m[1], m[2], m[3], m[4]) : null;
+  };
+  for (const row of text.split("\n")) {
+    if (/^\s*\[/.test(row)) events = /^\s*\[events\]/i.test(row);
+    if (!events) continue;
+    const format = /^\s*format:(.*)$/i.exec(row);
+    if (format) fields = format[1].split(",").map((f) => f.trim().toLowerCase());
+    const line = /^\s*dialogue:(.*)$/i.exec(row);
+    if (!line) continue;
+    const parts = line[1].split(",");
+    const start = time(parts[fields.indexOf("start")]);
+    const end = time(parts[fields.indexOf("end")]);
+    if (start === null || end === null) continue;
+    out.push({ start, end, text: toText("text", assWords(parts.slice(fields.length - 1).join(","))) });
+  }
+  return out;
+}
+
+/** What "film.fa.srt" says about its language. Only common ones: "film.HD.srt" is not a language. */
+const NAMED: Record<string, string> = {
+  fa: "fa", per: "fa", fas: "fa", farsi: "fa", persian: "fa", en: "en", eng: "en", english: "en", ar: "ar", ara: "ar", arabic: "ar",
+  fr: "fr", fre: "fr", de: "de", ger: "de", es: "es", spa: "es", tr: "tr", tur: "tr", ru: "ru", rus: "ru", ku: "ku", ckb: "ckb", az: "az",
+};
+
+/** Reads an .srt, .vtt, .ass or .ssa file. Null when there are no timed lines in it. */
+export function parseSubtitleFile(buf: Buffer, fileName: string): SubtitleTrack | null {
+  const text = decodeFile(buf).replace(/^\ufeff/, "").replace(/\r\n?/g, "\n");
+  const lines = /^\s*\[(script info|events)\]/im.test(text) ? assLines(text) : srtLines(text, /^\s*WEBVTT/.test(text));
+  const cues = tidy(lines.slice(0, MAX_CUES));
+  if (!cues.length) return null;
+  const name = fileName.replace(/\.[a-z]{3,4}$/i, "");
+  const named = /[.\-_ [(]([a-z]{2,7})[\])]?$/i.exec(name)?.[1].toLowerCase() ?? "";
+  const title = name.replace(/[\u0000-\u001f\u007f]/g, "").replace(/[._]+/g, " ").trim().slice(0, 80);
+  return { lang: trackLanguage(NAMED[named] ?? "", cues), title, forced: false, cues };
 }
 
 /** The older three-letter codes that Intl doesn't know ("per" for Persian is the one that matters here). */
@@ -588,7 +682,9 @@ export function trackLanguage(declared: string, cues: Cue[]) {
   // Arabic has no پ چ ژ گ; in Persian they are over two letters in a hundred.
   const persian = sample.match(/[پچژگ]/g)?.length ?? 0;
   if (persian / arabic > 0.005) return "fa";
-  return base === "ar" ? lang : /[یک]/.test(sample) ? "fa" : "ar";
+  if (base === "ar") return lang;
+  // A line or two may well have none of them; this is a Persian app, so that is taken for Persian.
+  return arabic < 300 || /[یک]/.test(sample) ? "fa" : "ar";
 }
 
 /* ---------- WebVTT ---------- */

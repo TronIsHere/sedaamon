@@ -21,6 +21,7 @@ import {
   Users,
   Volume2,
   X,
+  Captions,
   Clapperboard,
   Download,
   Film,
@@ -32,10 +33,11 @@ import { api } from "@/lib/api";
 import { categoryLabel } from "@/lib/discovery";
 import { cn, formatAgo, formatDate, formatDateTime, formatLastSeen } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
-import { defaultSubtitle, FILM_ACCEPT, filmClock, probeDuration, sizeLabel, subtitleLabels } from "@/lib/movies";
+import { defaultSubtitle, FILM_ACCEPT, filmClock, probeDuration, sizeLabel, SUBTITLE_ACCEPT, subtitleLabels } from "@/lib/movies";
 import type { AdminChannelDTO, AdminMessageDTO, AdminMoviesDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO, MeDTO, MovieDTO, MovieImportDTO } from "@/lib/types";
 import Avatar, { ServerAvatar } from "@/components/app/Avatar";
 import { Modal, SubmitButton, useSubmit } from "@/components/app/Dialogs";
+import FileDrop from "@/components/ui/file-drop";
 import Skeleton from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
@@ -869,6 +871,7 @@ function FilmsTab() {
   const [importing, setImporting] = useState(false);
   const [previewing, setPreviewing] = useState<MovieDTO>();
   const [renaming, setRenaming] = useState<MovieDTO>();
+  const [subtitling, setSubtitling] = useState<MovieDTO>();
   const [deleting, setDeleting] = useState<MovieDTO>();
 
   useEffect(() => {
@@ -1065,6 +1068,9 @@ function FilmsTab() {
                     <IconButton label="پیش‌نمایش" onClick={() => setPreviewing(m)}>
                       <Play className="size-4" />
                     </IconButton>
+                    <IconButton label="زیرنویس‌ها" onClick={() => setSubtitling(m)}>
+                      <Captions className="size-4" />
+                    </IconButton>
                     <IconButton label="تغییر نام" onClick={() => setRenaming(m)}>
                       <Pencil className="size-4" />
                     </IconButton>
@@ -1098,6 +1104,17 @@ function FilmsTab() {
           <p className="mt-3 text-xs leading-6 text-muted">اگر تصویر یا صدا پخش نشد، قالب فیلم با مرورگرها جور نیست. نسخهٔ MP4 (H.264 و AAC) آن را جایگزین کنید.</p>
         </Modal>
       )}
+      {subtitling && (
+        <SubtitlesDialog
+          movie={subtitling}
+          onClose={() => setSubtitling(undefined)}
+          onChange={(movie) => {
+            // Adding may finish after the dialog was closed; that must not open it again.
+            setSubtitling((s) => (s?.id === movie.id ? movie : s));
+            setData((d) => (d ? { ...d, movies: d.movies.map((x) => (x.id === movie.id ? movie : x)) } : d));
+          }}
+        />
+      )}
       {renaming && (
         <RenameDialog
           title="تغییر نام فیلم"
@@ -1129,6 +1146,101 @@ function FilmsTab() {
         </ConfirmDialog>
       )}
     </section>
+  );
+}
+
+/** A film's subtitles: the ones that came inside it and the files added to it. */
+function SubtitlesDialog({ movie, onClose, onChange }: { movie: MovieDTO; onClose: () => void; onChange: (movie: MovieDTO) => void }) {
+  const { toast } = useToast();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  /** The subtitle waiting for a yes before it is deleted. */
+  const [asking, setAsking] = useState<string>();
+  const labels = subtitleLabels(movie.subtitles);
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError(undefined);
+    try {
+      await action();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+    setBusy(false);
+  }
+
+  const add = (files: File[]) =>
+    run(async () => {
+      for (const file of files) {
+        const res = await fetch(`/api/movies/${movie.id}/subtitles`, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream", "X-Subtitle-Name": encodeURIComponent(file.name) },
+          body: file,
+        });
+        const body = (await res.json().catch(() => ({}))) as { movie?: MovieDTO; error?: string };
+        // The name is isolated, so a Latin one doesn't turn the Persian message around.
+        if (!res.ok || !body.movie) throw new Error(`\u2068${file.name}\u2069: ${body.error ?? "ارسال زیرنویس ممکن نشد"}`);
+        onChange(body.movie);
+      }
+      toast({ title: files.length > 1 ? "زیرنویس‌ها اضافه شدند" : "زیرنویس اضافه شد", variant: "success" });
+    });
+
+  const remove = (id: string) =>
+    run(async () => {
+      const res = await api<{ movie: MovieDTO }>(`/api/movies/${movie.id}/subtitles/${id}`, { method: "DELETE" });
+      setAsking(undefined);
+      onChange(res.movie);
+    });
+
+  return (
+    <Modal title="زیرنویس‌ها" onClose={onClose}>
+      <p className="-mt-2 mb-4 truncate text-sm text-muted">
+        <bdi>{movie.name}</bdi>
+      </p>
+      {movie.subtitles.length ? (
+        <ul className="mb-4 space-y-1">
+          {movie.subtitles.map((s, i) => (
+            <li key={s.id} className="flex min-h-14 items-center gap-3 rounded-2xl bg-ink-850 py-1.5 ps-3 pe-1.5">
+              <Captions className="size-4 shrink-0 text-accent" />
+              <div className="min-w-0 flex-1 leading-6">
+                <p className="truncate text-sm font-medium">{labels[i]}</p>
+                <p className="truncate text-xs text-muted">
+                  {s.uploaded ? "فایل جدا" : "داخل فیلم"}
+                  {s.uploaded && s.title && (
+                    <>
+                      {" · "}
+                      <bdi>{s.title}</bdi>
+                    </>
+                  )}
+                </p>
+              </div>
+              {asking === s.id ? (
+                <span className="flex shrink-0 gap-1 text-xs">
+                  <button type="button" disabled={busy} onClick={() => void remove(s.id)} className="min-h-10 rounded-full px-3 font-semibold text-danger transition-colors hover:bg-danger-strong/15">
+                    حذف
+                  </button>
+                  <button type="button" disabled={busy} onClick={() => setAsking(undefined)} className="min-h-10 rounded-full px-3 text-muted transition-colors hover:bg-ink-800">
+                    انصراف
+                  </button>
+                </span>
+              ) : (
+                <IconButton label={`حذف زیرنویس ${labels[i]}`} danger onClick={() => setAsking(s.id)}>
+                  <Trash2 className="size-4" />
+                </IconButton>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mb-4 text-sm leading-7 text-muted">این فیلم زیرنویسی ندارد. فایل زیرنویس آن را اضافه کنید.</p>
+      )}
+      <FileDrop accept={SUBTITLE_ACCEPT} busy={busy} onFiles={(files) => void add(files)} hint="SRT، VTT یا ASS · زبان از متن زیرنویس تشخیص داده می‌شود" />
+      {error && (
+        <p role="alert" className="mt-3 text-sm leading-6 text-danger">
+          {error}
+        </p>
+      )}
+    </Modal>
   );
 }
 
