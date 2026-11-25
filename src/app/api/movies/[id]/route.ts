@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { handle, requireAdmin, requireUser } from "@/server/http";
 import { deleteMovie, renameMovie, streamMovie } from "@/server/cinema";
+import { cancelRepackage } from "@/server/movieRepackage";
 
 /** The film itself, for anyone signed in: every cinema room plays from the same library. */
 export const GET = handle(async (req, ctx: RouteContext<"/api/movies/[id]">) => {
@@ -21,6 +22,7 @@ export const PATCH = handle(async (req, ctx: RouteContext<"/api/movies/[id]">) =
 export const DELETE = handle(async (_req, ctx: RouteContext<"/api/movies/[id]">) => {
   await requireAdmin();
   const { id } = await ctx.params;
+  cancelRepackage(id);
   await deleteMovie(id);
   return { ok: true };
 });

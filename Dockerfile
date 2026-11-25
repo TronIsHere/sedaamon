@@ -2,6 +2,9 @@
 # see docker-compose.yml and docs/en/installation.md.
 FROM node:22-bookworm-slim
 
+# ffmpeg repackages films that Safari can't play (the button in the admin panel's Films tab).
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1

@@ -160,6 +160,8 @@ const movieSchema = new Schema(
     ],
     // Which SUBTITLES_VERSION looked for them; films added before that existed have 0.
     subtitlesVersion: { type: Number, default: 0 },
+    // Repackaged for Safari; the subtitle tracks that were inside the original are no longer in the file.
+    repackaged: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

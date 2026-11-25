@@ -575,9 +575,12 @@ function Player({
           }}
           onTimeUpdate={(e) => setTime(e.currentTarget.currentTime)}
           onWaiting={() => setWaiting(true)}
-          onPlaying={() => setWaiting(false)}
+          onPlaying={() => {
+            setWaiting(false);
+            setBlocked(false);
+          }}
           onCanPlay={() => setWaiting(false)}
-          onError={() => setProblem("این فیلم در مرورگر شما پخش نمی‌شود. فیلم را با MP4 (H.264 و AAC) دوباره اضافه کنید")}
+          onError={() => setProblem("این فیلم در مرورگر شما پخش نمی‌شود. مدیر صدامون می‌تواند آن را از پنل مدیریت برای سافاری و آیفون آماده کند")}
         >
           {subtitle && <track key={subtitle.id} kind="subtitles" src={subtitle.url} srcLang={subtitle.lang} label={labels[subtitles.indexOf(subtitle)]} />}
         </video>

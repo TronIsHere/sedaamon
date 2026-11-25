@@ -351,6 +351,8 @@ export interface MovieDTO {
   createdAt: string;
   /** Streams the film (byte ranges, so it can be seeked). */
   url: string;
+  /** Already repackaged by the server to play in Safari. */
+  repackaged: boolean;
   /** The subtitles found inside the film or added to it, the one to show first at the front. */
   subtitles: SubtitleDTO[];
 }
@@ -400,6 +402,19 @@ export interface AdminMoviesDTO {
   maxBytes: number;
   /** Films the server is downloading from a link, or recently finished or failed to. */
   imports: MovieImportDTO[];
+  /** Films being repackaged for Safari, or recently finished or failed to. */
+  repackages: MovieRepackageDTO[];
+  /** Whether the server has the ffmpeg that takes. */
+  canRepackage: boolean;
+}
+
+/** A film the server is repackaging so that Safari plays it. */
+export interface MovieRepackageDTO {
+  movieId: string;
+  name: string;
+  status: "waiting" | "converting" | "saving" | "done" | "failed";
+  percent: number | null;
+  error: string | null;
 }
 
 /** A film the server is fetching from a link the admin gave it. */

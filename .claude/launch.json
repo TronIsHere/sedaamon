@@ -44,6 +44,22 @@
         "PORT": "3100"
       },
       "port": 3100
+    },
+    {
+      "name": "cinema-test",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
+      "env": {
+        "PORT": "3100",
+        "HOST": "127.0.0.1",
+        "MONGODB_URI": "mongodb://127.0.0.1:27017/sedaamon_claude_e2e",
+        "UPLOAD_DIR": "/private/tmp/claude-501/-Users-erwin-Development-Website-sedaamon-2/df7bf181-b3d8-4ed2-afa6-05b2221f3567/scratchpad/e2e-uploads",
+        "ADMIN_PHONES": "09120000999"
+      },
+      "port": 3100
     }
   ]
 }

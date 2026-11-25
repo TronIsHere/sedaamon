@@ -26,6 +26,7 @@ import {
   Download,
   Film,
   Loader2,
+  MonitorSmartphone,
   Play,
   Upload,
 } from "lucide-react";
@@ -34,7 +35,7 @@ import { categoryLabel } from "@/lib/discovery";
 import { cn, formatAgo, formatDate, formatDateTime, formatLastSeen } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
 import { defaultSubtitle, FILM_ACCEPT, filmClock, probeDuration, sizeLabel, SUBTITLE_ACCEPT, subtitleLabels } from "@/lib/movies";
-import type { AdminChannelDTO, AdminMessageDTO, AdminMoviesDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO, MeDTO, MovieDTO, MovieImportDTO } from "@/lib/types";
+import type { AdminChannelDTO, AdminMessageDTO, AdminMoviesDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO, MeDTO, MovieDTO, MovieImportDTO, MovieRepackageDTO } from "@/lib/types";
 import Avatar, { ServerAvatar } from "@/components/app/Avatar";
 import { Modal, SubmitButton, useSubmit } from "@/components/app/Dialogs";
 import FileDrop from "@/components/ui/file-drop";
@@ -263,6 +264,7 @@ function ConfirmDialog({
   children,
   action,
   confirmText,
+  harmless,
   onClose,
   onConfirm,
 }: {
@@ -270,6 +272,8 @@ function ConfirmDialog({
   children: ReactNode;
   action: string;
   confirmText?: string;
+  /** Not a deletion, so the button isn't red. */
+  harmless?: boolean;
   onClose: () => void;
   onConfirm: () => Promise<unknown>;
 }) {
@@ -288,7 +292,7 @@ function ConfirmDialog({
           </label>
         )}
         {error && <p className="text-sm text-danger">{error}</p>}
-        <button disabled={busy || (!!confirmText && typed.trim() !== confirmText)} className="btn-primary w-full bg-danger-strong text-white">
+        <button disabled={busy || (!!confirmText && typed.trim() !== confirmText)} className={cn("btn-primary w-full", !harmless && "bg-danger-strong text-white")}>
           {action}
         </button>
       </form>
@@ -873,6 +877,7 @@ function FilmsTab() {
   const [renaming, setRenaming] = useState<MovieDTO>();
   const [subtitling, setSubtitling] = useState<MovieDTO>();
   const [deleting, setDeleting] = useState<MovieDTO>();
+  const [repackaging, setRepackaging] = useState<MovieDTO>();
 
   useEffect(() => {
     let live = true;
@@ -890,8 +895,9 @@ function FilmsTab() {
     };
   }, [q, nonce]);
 
-  // While the server is downloading something, check on it every couple of seconds.
-  const downloading = !!data?.imports.some((i) => i.status === "downloading" || i.status === "processing");
+  // While the server is downloading or repackaging something, check on it every couple of seconds.
+  const downloading =
+    !!data?.imports.some((i) => i.status === "downloading" || i.status === "processing") || !!data?.repackages.some(isRepackaging);
   useEffect(() => {
     if (!downloading) return;
     const timer = setInterval(reload, 2000);
@@ -913,19 +919,22 @@ function FilmsTab() {
       toast({ title: `حجم فیلم نباید بیشتر از ${sizeLabel(maxBytes)} باشد`, variant: "error" });
       return;
     }
-    let duration: number;
+    let duration: number | null = null;
     try {
       duration = await probeDuration(file);
     } catch {
-      toast({ title: "مرورگر این فایل را پخش نمی‌کند. فایل MP4 (H.264 و AAC) یا WebM انتخاب کنید", variant: "error" });
-      return;
+      // Safari can't read an x265 MKV, but the server can, and can then repackage it.
+      if (!data?.canRepackage) {
+        toast({ title: "مرورگر این فایل را پخش نمی‌کند. فایل MP4 (H.264 و AAC) یا WebM انتخاب کنید", variant: "error" });
+        return;
+      }
     }
     const xhr = new XMLHttpRequest();
     setUpload({ name: file.name, loaded: 0, total: file.size, cancel: () => xhr.abort() });
     xhr.open("POST", "/api/movies");
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader("X-Movie-Name", encodeURIComponent(file.name));
-    xhr.setRequestHeader("X-Movie-Duration", String(duration));
+    if (duration !== null) xhr.setRequestHeader("X-Movie-Duration", String(duration));
     xhr.upload.onprogress = (e) => setUpload((u) => (u ? { ...u, loaded: e.loaded, total: e.total || u.total } : u));
     xhr.onload = () => {
       setUpload(null);
@@ -934,7 +943,7 @@ function FilmsTab() {
         body = JSON.parse(xhr.responseText);
       } catch {}
       if (xhr.status >= 200 && xhr.status < 300 && body.movie) {
-        toast({ title: "فیلم به کتابخانه اضافه شد", variant: "success" });
+        toast({ title: duration === null ? "فیلم اضافه شد. برای پخش در سافاری، دکمهٔ آماده‌سازی آن را بزنید" : "فیلم به کتابخانه اضافه شد", variant: "success" });
         reload();
       } else {
         toast({ title: body.error ?? (xhr.status === 413 ? "فیلم برای سرور بیش از حد بزرگ است" : "ارسال فیلم ممکن نشد"), variant: "error" });
@@ -946,6 +955,15 @@ function FilmsTab() {
     };
     xhr.onabort = () => setUpload(null);
     xhr.send(file);
+  }
+
+  async function dropRepackage(id: string) {
+    try {
+      await api(`/api/movies/${id}/repackage`, { method: "DELETE" });
+      reload();
+    } catch (err) {
+      toast({ title: (err as Error).message, variant: "error" });
+    }
   }
 
   async function dropImport(job: MovieImportDTO) {
@@ -986,11 +1004,11 @@ function FilmsTab() {
       </Toolbar>
 
       <p className="mb-4 text-xs leading-6 text-muted">
-        فیلم‌های این کتابخانه در همهٔ سینماهای صدامون دیده می‌شوند. قالب MP4 (H.264 و AAC) یا WebM
+        فیلم‌های این کتابخانه در همهٔ سینماهای صدامون دیده می‌شوند. قالب MP4، MKV یا WebM
         {data && <> · حداکثر {sizeLabel(data.maxBytes)}</>}
       </p>
 
-      {(upload || !!data?.imports.length) && (
+      {(upload || !!data?.imports.length || !!data?.repackages.length) && (
         <ul className="mb-4 space-y-2">
           {upload && (
             <ProgressCard
@@ -1017,6 +1035,18 @@ function FilmsTab() {
                     ? { label: "لغو", onClick: () => void dropImport(job) }
                     : { label: "بستن", onClick: () => void dropImport(job) }
               }
+            />
+          ))}
+          {data?.repackages.map((job) => (
+            <ProgressCard
+              key={job.movieId}
+              icon={<MonitorSmartphone className="size-4" />}
+              title={job.name}
+              detail={repackageDetail(job)}
+              tone={job.status === "failed" ? "danger" : job.status === "done" ? "accent" : "default"}
+              percent={job.status === "saving" ? 100 : job.percent}
+              busy={isRepackaging(job)}
+              action={job.status === "saving" ? undefined : { label: isRepackaging(job) ? "لغو" : "بستن", onClick: () => void dropRepackage(job.movieId) }}
             />
           ))}
         </ul>
@@ -1049,7 +1079,8 @@ function FilmsTab() {
                         <bdi>{m.name}</bdi>
                       </p>
                       <p className="text-xs text-muted">
-                        {m.contentType === "video/webm" ? "WebM" : "MP4"}
+                        {m.contentType === "video/webm" ? "MKV / WebM" : "MP4"}
+                        {m.repackaged && " · آمادهٔ سافاری"}
                         {!!m.subtitles.length && ` · زیرنویس ${subtitleLabels(m.subtitles).join("، ")}`}
                       </p>
                     </div>
@@ -1068,6 +1099,11 @@ function FilmsTab() {
                     <IconButton label="پیش‌نمایش" onClick={() => setPreviewing(m)}>
                       <Play className="size-4" />
                     </IconButton>
+                    {!m.repackaged && (
+                      <IconButton label="آماده‌سازی برای سافاری و آیفون" onClick={() => setRepackaging(m)}>
+                        <MonitorSmartphone className="size-4" />
+                      </IconButton>
+                    )}
                     <IconButton label="زیرنویس‌ها" onClick={() => setSubtitling(m)}>
                       <Captions className="size-4" />
                     </IconButton>
@@ -1101,7 +1137,7 @@ function FilmsTab() {
               <track key={s.id} kind="subtitles" src={s.url} srcLang={s.lang} label={subtitleLabels(previewing.subtitles)[i]} default={s === defaultSubtitle(previewing.subtitles)} />
             ))}
           </video>
-          <p className="mt-3 text-xs leading-6 text-muted">اگر تصویر یا صدا پخش نشد، قالب فیلم با مرورگرها جور نیست. نسخهٔ MP4 (H.264 و AAC) آن را جایگزین کنید.</p>
+          <p className="mt-3 text-xs leading-6 text-muted">اگر تصویر یا صدا پخش نشد، قالب فیلم با این مرورگر جور نیست. اگر مشکل در سافاری یا آیفون است، دکمهٔ «آماده‌سازی برای سافاری و آیفون» را بزنید.</p>
         </Modal>
       )}
       {subtitling && (
@@ -1127,6 +1163,25 @@ function FilmsTab() {
             toast({ title: "نام فیلم عوض شد", variant: "success" });
           }}
         />
+      )}
+      {repackaging && (
+        <ConfirmDialog
+          title="آماده‌سازی برای سافاری و آیفون"
+          action="شروع آماده‌سازی"
+          harmless
+          onClose={() => setRepackaging(undefined)}
+          onConfirm={async () => {
+            await api(`/api/movies/${repackaging.id}/repackage`, { method: "POST" });
+            reload();
+          }}
+        >
+          <p>
+            سرور فیلم <b><bdi>{repackaging.name}</bdi></b> را به فایل MP4 مناسب سافاری تبدیل می‌کند. کیفیت تصویر دست نمی‌خورد و صدا استریوی AAC می‌شود. زیرنویس‌ها می‌مانند.
+          </p>
+          <p>فیلم تا پایان کار قابل پخش است. بعد فایل تازه جای فایل اصلی را می‌گیرد و پخش در سینماها یک لحظه از نو بارگذاری می‌شود.</p>
+          <p className="text-muted">دستگاه‌هایی که x265 را پشتیبانی نمی‌کنند باز هم فیلم x265 را پخش نمی‌کنند. فایل اصلی و صدای چندکاناله برنمی‌گردد.</p>
+          {!data?.canRepackage && <p className="text-danger">برنامهٔ ffmpeg روی سرور نصب نیست. اول باید نصب شود.</p>}
+        </ConfirmDialog>
       )}
       {deleting && (
         <ConfirmDialog
@@ -1242,6 +1297,23 @@ function SubtitlesDialog({ movie, onClose, onChange }: { movie: MovieDTO; onClos
       )}
     </Modal>
   );
+}
+
+const isRepackaging = (job: MovieRepackageDTO) => job.status === "waiting" || job.status === "converting" || job.status === "saving";
+
+function repackageDetail(job: MovieRepackageDTO) {
+  switch (job.status) {
+    case "waiting":
+      return "آماده‌سازی برای سافاری · در صف";
+    case "converting":
+      return "در حال آماده‌سازی برای سافاری";
+    case "saving":
+      return "ذخیرهٔ فایل تازه…";
+    case "done":
+      return "برای سافاری و آیفون آماده شد";
+    case "failed":
+      return job.error ?? "آماده‌سازی ممکن نشد";
+  }
 }
 
 function importDetail(job: MovieImportDTO) {

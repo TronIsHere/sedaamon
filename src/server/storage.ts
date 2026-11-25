@@ -16,6 +16,8 @@ interface Storage {
   putFile(key: string, file: string, contentType: string, size: number): Promise<void>;
   /** Streams a stored file, or the inclusive byte range of it. Null when it isn't there. */
   stream(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array> | null>;
+  /** Where the file is on this machine, or null when it isn't on it. */
+  localPath(key: string): string | null;
 }
 
 /** Where big uploads are written while they arrive, before they go into storage. */
@@ -67,6 +69,7 @@ function s3Storage(): Storage {
         throw err;
       }
     },
+    localPath: () => null,
   };
 }
 
@@ -79,6 +82,7 @@ function diskStorage(): Storage {
     return file;
   };
   return {
+    localPath: fileOf,
     async put(key, body) {
       const file = fileOf(key);
       await mkdir(path.dirname(file), { recursive: true });

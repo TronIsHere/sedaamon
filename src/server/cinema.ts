@@ -36,6 +36,8 @@ type ChannelDoc = {
 type MovieDoc = {
   _id: Types.ObjectId;
   uploader?: Types.ObjectId | null;
+  key: string;
+  repackaged?: boolean | null;
   name: string;
   contentType: string;
   size: number;
@@ -64,6 +66,9 @@ export const stateOf = (channel: ChannelDoc): CinemaStateDTO => {
 /** Where the film is right now, in seconds. */
 const positionNow = (s: CinemaStateDTO) => (s.playing ? s.position + (Date.now() - s.updatedAt) / 1000 : s.position);
 
+/** Tells one file of a film from the next. */
+const fileVersion = (key: string) => key.replace(/^.*\//, "").slice(0, 8);
+
 async function toMovies(docs: MovieDoc[]): Promise<MovieDTO[]> {
   const ids = [...new Set(docs.flatMap((m) => (m.uploader ? [String(m.uploader)] : [])))];
   const users = new Map((await User.find({ _id: { $in: ids } }).lean()).map((u) => [String(u._id), toUser(u)]));
@@ -75,7 +80,9 @@ async function toMovies(docs: MovieDoc[]): Promise<MovieDTO[]> {
     contentType: m.contentType,
     uploadedBy: (m.uploader && users.get(String(m.uploader))) || null,
     createdAt: (m.createdAt ?? new Date()).toISOString(),
-    url: `/api/movies/${m._id}`,
+    // Browsers keep a film for good, so a new file needs a new address.
+    url: `/api/movies/${m._id}?v=${fileVersion(m.key)}`,
+    repackaged: !!m.repackaged,
     subtitles: toSubtitles(m),
   }));
 }
@@ -297,6 +304,36 @@ const storedSource = (key: string, size: number): ByteSource => ({
   },
 });
 
+/** Reads the subtitles inside a stored film and keeps them beside it. */
+async function readSubtitles(film: { _id: Types.ObjectId; key: string; size: number; contentType: string }) {
+  const tracks = await extractSubtitles(storedSource(film.key, film.size), film.contentType);
+  const subtitles = await storeSubtitles(film.key, tracks);
+  // The film's own tracks are replaced; files the admin added stay, even ones added during the scan.
+  const before = await Movie.findByIdAndUpdate(film._id, { $pull: { subtitles: { uploaded: { $ne: true } } } }, { returnDocument: "before" }).lean();
+  const saved = await Movie.findByIdAndUpdate(film._id, { $push: { subtitles: { $each: subtitles } }, subtitlesVersion: SUBTITLES_VERSION });
+  // Replaced ones go, and so do these if the film was deleted meanwhile.
+  const stale = (saved ? (before?.subtitles ?? []).filter((s) => !s.uploaded) : subtitles).map((s) => s.key);
+  await getStorage().remove(stale).catch(() => {});
+  if (saved && subtitles.length) await broadcastLibrary();
+}
+
+/** Makes sure a film's own subtitles are out of it, before a file without them takes its place. */
+export async function ensureSubtitlesRead(movieId: string) {
+  const film = await Movie.findById(movieId, { key: 1, size: 1, contentType: 1, subtitlesVersion: 1 }).lean();
+  if (film && (film.subtitlesVersion ?? 0) < SUBTITLES_VERSION) await readSubtitles(film);
+}
+
+/**
+ * Puts a new file in place of a film's old one, for everyone at once: cinemas showing it load the new file and go on
+ * from where they were. False (and the new file gone) when the film was deleted or changed in the meantime.
+ */
+export async function swapMovieFile(movieId: string, oldKey: string, file: { key: string; contentType: string; size: number }) {
+  const saved = await Movie.findOneAndUpdate({ _id: movieId, key: oldKey }, { ...file, repackaged: true });
+  await getStorage().remove([saved ? oldKey : file.key]).catch((err) => console.error("[cinema] could not remove", err));
+  if (saved) await broadcastLibrary();
+  return !!saved;
+}
+
 const scan = globalThis as unknown as { __subtitleScan?: { running: boolean; failed: Set<string> } };
 
 /**
@@ -309,20 +346,13 @@ async function readMissingSubtitles() {
   state.running = true;
   try {
     // $not also matches films with no version at all.
-    const films = await Movie.find({ subtitlesVersion: { $not: { $gte: SUBTITLES_VERSION } } }, { key: 1, size: 1, contentType: 1, name: 1 }).lean();
+    // A repackaged film has none left inside it: reading it again would only lose the ones already taken out.
+    const films = await Movie.find({ subtitlesVersion: { $not: { $gte: SUBTITLES_VERSION } }, repackaged: { $ne: true } }, { key: 1, size: 1, contentType: 1, name: 1 }).lean();
     for (const film of films) {
       const id = String(film._id);
       if (state.failed.has(id)) continue;
       try {
-        const tracks = await extractSubtitles(storedSource(film.key, film.size), film.contentType);
-        const subtitles = await storeSubtitles(film.key, tracks);
-        // The film's own tracks are replaced; files the admin added stay, even ones added during the scan.
-        const before = await Movie.findByIdAndUpdate(film._id, { $pull: { subtitles: { uploaded: { $ne: true } } } }, { returnDocument: "before" }).lean();
-        const saved = await Movie.findByIdAndUpdate(film._id, { $push: { subtitles: { $each: subtitles } }, subtitlesVersion: SUBTITLES_VERSION });
-        // Replaced ones go, and so do these if the film was deleted meanwhile.
-        const stale = (saved ? (before?.subtitles ?? []).filter((s) => !s.uploaded) : subtitles).map((s) => s.key);
-        await getStorage().remove(stale).catch(() => {});
-        if (saved && subtitles.length) await broadcastLibrary();
+        await readSubtitles(film);
       } catch (err) {
         // Not tried again until the server restarts.
         state.failed.add(id);
@@ -476,6 +506,9 @@ export async function streamMovie(req: Request, movieId: string) {
   if (!isValidObjectId(movieId)) throw new HttpError(404, "فیلم پیدا نشد");
   const movie = await Movie.findById(movieId).lean();
   if (!movie) throw new HttpError(404, "فیلم پیدا نشد");
+  // Bytes of two different files must never be mixed in one playback.
+  const version = new URL(req.url).searchParams.get("v");
+  if (version && version !== fileVersion(movie.key)) throw new HttpError(404, "فایل این فیلم عوض شده است");
 
   const size = movie.size;
   const headers: Record<string, string> = {
