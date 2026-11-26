@@ -1,10 +1,24 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useLocalParticipant, useRoomContext } from "@livekit/components-react";
-import { AudioPresets, Track } from "livekit-client";
-import { Gauge, HeadphoneOff, Headphones, Mic, MicOff, MonitorUp, PhoneOff, Video, VideoOff } from "lucide-react";
+import { AudioPresets, facingModeFromLocalTrack, LocalVideoTrack, Track } from "livekit-client";
+import {
+  Gauge,
+  HeadphoneOff,
+  Headphones,
+  Mic,
+  MicOff,
+  MonitorUp,
+  PhoneOff,
+  SwitchCamera,
+  Video,
+  VideoOff,
+} from "lucide-react";
 import { cn } from "@/lib/format";
+import { isTouchDevice } from "@/lib/mobile";
+
+const noSubscribe = () => () => {};
 import { canShareScreenAudio, micErrorMessage } from "@/lib/voice";
 import type { VoiceSettings } from "./useVoice";
 
@@ -78,6 +92,20 @@ export default function VoiceControls({
   } = useVoiceToggles(settings);
   const canShareScreen = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getDisplayMedia;
   const [shareHint, setShareHint] = useState<string>();
+  // Phones have a front and a back camera; read after mount so the server render matches the first client one.
+  const canFlipCamera = useSyncExternalStore(noSubscribe, isTouchDevice, () => false);
+
+  /**
+   * Swaps between the front and back camera. Restarting the published track swaps the picture in place,
+   * so others keep seeing the same video without it being unpublished. Turning the camera off and on keeps the choice.
+   */
+  const flipCamera = () =>
+    attempt(async () => {
+      const track = localParticipant.getTrackPublication(Track.Source.Camera)?.track;
+      if (!(track instanceof LocalVideoTrack)) return;
+      const { facingMode } = facingModeFromLocalTrack(track);
+      await track.restartTrack({ facingMode: facingMode === "environment" ? "user" : "environment" });
+    }, "تعویض دوربین ممکن نشد");
 
   /**
    * Shares the screen with its sound. The sound is meant to be a film or a game, not a voice, so the
@@ -147,6 +175,11 @@ export default function VoiceControls({
             >
               {isCameraEnabled ? <Video className={icon} /> : <VideoOff className={icon} />}
             </ControlButton>
+            {isCameraEnabled && canFlipCamera && (
+              <ControlButton className={size} label="تعویض دوربین جلو و عقب" onClick={flipCamera}>
+                <SwitchCamera className={icon} />
+              </ControlButton>
+            )}
             {canShareScreen && (
               <ControlButton
                 className={size}

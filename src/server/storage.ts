@@ -29,6 +29,36 @@ function requireEnv(name: string) {
   return value;
 }
 
+/**
+ * A Node stream as a web stream. Readable.toWeb throws an uncaught "Controller is already closed" when the reader
+ * goes away while a chunk is on its way, and players drop requests all the time (every seek does).
+ */
+export function webStream(source: Readable): ReadableStream<Uint8Array> {
+  const chunks = source[Symbol.asyncIterator]();
+  let cancelled = false;
+  // Errors reach the reader through the iterator; this only keeps one that comes before the first read from being uncaught.
+  source.on("error", () => {});
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          const { done, value } = await chunks.next();
+          if (cancelled) return;
+          if (done) controller.close();
+          else controller.enqueue(new Uint8Array(value));
+        } catch (err) {
+          if (!cancelled) controller.error(err);
+        }
+      },
+      cancel() {
+        cancelled = true;
+        source.destroy();
+      },
+    },
+    { highWaterMark: 0 },
+  );
+}
+
 function s3Storage(): Storage {
   const client = new S3Client({
     endpoint: requireEnv("S3_ENDPOINT"),
@@ -63,7 +93,7 @@ function s3Storage(): Storage {
     async stream(key, range) {
       try {
         const res = await client.send(new GetObjectCommand({ Bucket, Key: key, Range: range ? `bytes=${range.start}-${range.end}` : undefined }));
-        return (res.Body?.transformToWebStream() as ReadableStream<Uint8Array> | undefined) ?? null;
+        return res.Body ? webStream(res.Body as Readable) : null;
       } catch (err) {
         if ((err as { name?: string }).name === "NoSuchKey") return null;
         throw err;
@@ -108,7 +138,7 @@ function diskStorage(): Storage {
       const file = fileOf(key);
       if (!(await stat(file).catch(() => null))?.isFile()) return null;
       // The path is built at run time from UPLOAD_DIR, so the bundler can't (and needn't) trace what it points at.
-      return Readable.toWeb(createReadStream(/*turbopackIgnore: true*/ file, range)) as ReadableStream<Uint8Array>;
+      return webStream(createReadStream(/*turbopackIgnore: true*/ file, range));
     },
   };
 }
