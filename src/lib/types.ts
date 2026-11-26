@@ -1,4 +1,5 @@
 import type { Permission, Standing } from "./permissions";
+import type { TopUpStatus } from "./store";
 
 export type ChannelType = "text" | "voice" | "cinema";
 
@@ -21,6 +22,9 @@ export interface UserDTO {
   avatar?: string | null;
   status?: Status;
   statusText?: string;
+  /** Store looks they wear: a ring around the picture and a picture behind their name (ids from lib/store). */
+  frame?: string;
+  background?: string;
 }
 
 export interface MeDTO extends UserDTO {
@@ -28,6 +32,46 @@ export interface MeDTO extends UserDTO {
   bio: string;
   /** Whether this person can open the site's admin panel (/admin). */
   isAdmin?: boolean;
+  /** Seda Points to spend in the store, and the items bought there. */
+  points: number;
+  inventory: string[];
+}
+
+/** An order for Seda Points paid by card-to-card transfer, as its buyer sees it. */
+export interface TopUpDTO {
+  id: string;
+  packageId: string;
+  points: number;
+  /** Toman: the package's price, and the exact sum to transfer (a little more, to tell orders apart). */
+  price: number;
+  amount: number;
+  status: TopUpStatus;
+  cardLast4: string;
+  reference: string;
+  createdAt: string;
+  submittedAt: string | null;
+  expiresAt: string;
+  reviewedAt: string | null;
+  note: string;
+}
+
+export interface AdminTopUpDTO extends TopUpDTO {
+  user: (UserDTO & { phone: string }) | null;
+}
+
+/** Where to send a card-to-card transfer. Null while the site has not set it up. */
+export interface PaymentCardDTO {
+  number: string;
+  holder: string;
+}
+
+export interface WalletDTO {
+  points: number;
+  inventory: string[];
+  frame: string | null;
+  background: string | null;
+  topUps: TopUpDTO[];
+  card: PaymentCardDTO | null;
 }
 
 export interface ServerDTO {
@@ -72,6 +116,13 @@ export interface ChannelDTO {
   allowedRoles: string[];
   /** Ids of members let into a private channel by name. Empty for public ones. */
   allowedMembers: string[];
+  /** Text channels: "roles" makes it read-only for everyone outside `postRoles` (channel managers always write). */
+  posting: "everyone" | "roles";
+  postRoles: string[];
+  /** Seconds each person waits between messages; 0 is off. */
+  slowmode: number;
+  /** A channel for news from the people who run the server: always "roles", with its own icon. */
+  announcement: boolean;
 }
 
 /** Achievements shown next to a member (see lib/badges). */
@@ -472,6 +523,8 @@ export interface AdminStatsDTO {
   messagesWeek: number;
   online: number;
   inVoice: number;
+  /** Card-to-card top-ups waiting for the admin to check the bank statement. */
+  pendingTopUps: number;
 }
 
 export interface AdminUserDTO {

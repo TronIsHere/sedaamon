@@ -1,6 +1,6 @@
 import { isValidObjectId, type Types } from "mongoose";
 import { z } from "zod";
-import { canViewChannel, type Standing } from "@/lib/permissions";
+import { canViewChannel, SLOWMODE_STEPS, type Standing } from "@/lib/permissions";
 import { isVoiceRoom, VOICE_ROOM_TYPES } from "@/lib/types";
 import { accessOf, channelAudience } from "./access";
 import { HttpError } from "./errors";
@@ -17,6 +17,40 @@ export const channelAccessInput = z.object({
   allowedMembers: z.array(z.string()).max(200).optional(),
   categoryId: z.string().nullable().optional(),
 });
+
+/** Who may write in a text channel and how often, as sent when creating or editing one. */
+export const channelPostingInput = z.object({
+  posting: z.enum(["everyone", "roles"]).optional(),
+  postRoles: z.array(z.string()).max(100).optional(),
+  slowmode: z.number().int().optional(),
+  announcement: z.boolean().optional(),
+});
+
+/**
+ * Turns posting settings into the fields to store. Only text channels have them; an announcement channel is always
+ * limited to roles, and slow mode must be one of the offered steps.
+ */
+export async function postingFields(
+  serverId: string,
+  type: "text" | "voice" | "cinema",
+  body: z.infer<typeof channelPostingInput>,
+  before?: { posting?: string | null; postRoles?: string[] | null; announcement?: boolean | null },
+) {
+  if (type !== "text") return {};
+  const out: Record<string, unknown> = {};
+  if (body.slowmode !== undefined) {
+    if (!(SLOWMODE_STEPS as readonly number[]).includes(body.slowmode)) throw new HttpError(400, "زمان حالت آهسته معتبر نیست");
+    out.slowmode = body.slowmode;
+  }
+  const announcement = body.announcement ?? !!before?.announcement;
+  if (body.announcement !== undefined) out.announcement = announcement;
+  const posting = announcement ? "roles" : (body.posting ?? (before?.posting === "roles" ? "roles" : "everyone"));
+  if (body.posting !== undefined || body.announcement !== undefined) out.posting = posting;
+  // An open channel has no writers' list; locking it again starts from a clean one.
+  if (posting === "everyone") out.postRoles = [];
+  else if (body.postRoles !== undefined) out.postRoles = await rolesOf(serverId, body.postRoles);
+  return out;
+}
 
 /** Keeps only the people who really belong to the server, so a list can't smuggle in outsiders. */
 export async function membersOf(serverId: string, ids: string[]): Promise<Types.ObjectId[]> {

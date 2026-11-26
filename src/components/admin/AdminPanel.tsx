@@ -29,13 +29,17 @@ import {
   MonitorSmartphone,
   Play,
   Upload,
+  Wallet,
+  Check,
+  Coins,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { categoryLabel } from "@/lib/discovery";
 import { cn, formatAgo, formatDate, formatDateTime, formatLastSeen } from "@/lib/format";
-import { toPersianDigits } from "@/lib/phone";
+import { toLatinDigits, toPersianDigits } from "@/lib/phone";
 import { defaultSubtitle, FILM_ACCEPT, filmClock, probeDuration, sizeLabel, SUBTITLE_ACCEPT, subtitleLabels } from "@/lib/movies";
-import type { AdminChannelDTO, AdminMessageDTO, AdminMoviesDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO, MeDTO, MovieDTO, MovieImportDTO, MovieRepackageDTO } from "@/lib/types";
+import { formatPoints, formatToman, TOPUP_STATUS } from "@/lib/store";
+import type { AdminTopUpDTO, AdminChannelDTO, AdminMessageDTO, AdminMoviesDTO, AdminServerDTO, AdminStatsDTO, AdminUserDTO, MeDTO, MovieDTO, MovieImportDTO, MovieRepackageDTO } from "@/lib/types";
 import Avatar, { ServerAvatar } from "@/components/app/Avatar";
 import { Modal, SubmitButton, useSubmit } from "@/components/app/Dialogs";
 import FileDrop from "@/components/ui/file-drop";
@@ -43,10 +47,11 @@ import Skeleton from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/components/ui/toast";
 
-type Tab = "overview" | "users" | "servers" | "channels" | "messages" | "films";
+type Tab = "overview" | "payments" | "users" | "servers" | "channels" | "messages" | "films";
 
 const TABS: { id: Tab; label: string; icon: typeof Users }[] = [
   { id: "overview", label: "نمای کلی", icon: LayoutDashboard },
+  { id: "payments", label: "پرداخت‌ها", icon: Wallet },
   { id: "users", label: "کاربران", icon: Users },
   { id: "servers", label: "سرورها", icon: ServerIcon },
   { id: "channels", label: "کانال‌ها", icon: Hash },
@@ -107,6 +112,7 @@ export default function AdminPanel({ me, initialStats, initialTab }: { me: MeDTO
 
       <main className="mx-auto max-w-6xl px-4 py-6 pb-safe-4">
         {tab === "overview" && <Overview initial={initialStats} onOpen={setTab} />}
+        {tab === "payments" && <PaymentsTab />}
         {tab === "users" && <UsersTab meId={me.id} />}
         {tab === "servers" && (
           <ServersTab
@@ -300,6 +306,186 @@ function ConfirmDialog({
   );
 }
 
+// ---- Payments ----------------------------------------------------------------------------------
+
+const PAYMENT_FILTERS: { id: string; label: string }[] = [
+  { id: "submitted", label: "منتظر تأیید" },
+  { id: "open", label: "همهٔ باز‌ها" },
+  { id: "approved", label: "تأییدشده" },
+  { id: "rejected", label: "ردشده" },
+  { id: "all", label: "همه" },
+];
+
+/**
+ * Card-to-card top-ups. Each order asks for a slightly different sum, so searching a bank statement's amount
+ * («30025») finds the one order it pays for. Approving adds the points to the buyer's wallet at once.
+ */
+function PaymentsTab() {
+  const { toast } = useToast();
+  const [status, setStatus] = useState("submitted");
+  const [q, setQ] = useState("");
+  const { items, setItems, error, reload } = useAdminList<AdminTopUpDTO>(`/api/admin/topups?status=${status}`, "topUps", "");
+  const [reviewing, setReviewing] = useState<{ topUp: AdminTopUpDTO; action: "approve" | "reject" }>();
+  const [note, setNote] = useState("");
+
+  const digits = toLatinDigits(q).replace(/\D/g, "");
+  const shown = items?.filter(
+    (t) =>
+      !q.trim() ||
+      (digits && (String(t.amount).includes(digits) || t.cardLast4.includes(digits) || t.reference.includes(digits) || !!t.user?.phone.includes(digits))) ||
+      !!t.user?.name.includes(q.trim()),
+  ) ?? null;
+
+  const review = async () => {
+    if (!reviewing) return;
+    const { topUp } = await api<{ topUp: AdminTopUpDTO }>(`/api/admin/topups/${reviewing.topUp.id}`, { body: { action: reviewing.action, note } });
+    setItems((list) => (status === "all" ? (list?.map((x) => (x.id === topUp.id ? topUp : x)) ?? null) : (list?.filter((x) => x.id !== topUp.id) ?? null)));
+    toast({ title: reviewing.action === "approve" ? `${formatPoints(topUp.points)} به کیف پول ${topUp.user?.name ?? "کاربر"} اضافه شد` : "پرداخت رد شد" });
+  };
+
+  return (
+    <section>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {PAYMENT_FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            onClick={() => setStatus(f.id)}
+            className={cn("min-h-9 rounded-full px-4 text-sm", status === f.id ? "bg-accent-strong text-on-accent" : "bg-ink-800 text-muted hover:text-fg")}
+          >
+            {f.label}
+          </button>
+        ))}
+      </div>
+      <Toolbar q={q} onQ={setQ} placeholder="جست‌وجوی مبلغ واریزی، ۴ رقم کارت، شمارهٔ پیگیری یا موبایل" onReload={reload} />
+      <ListState items={shown} error={error} empty={q ? "پرداختی با این مشخصات نیست" : "پرداختی در این فهرست نیست"} cols={4} />
+      {!!shown?.length && (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>مبلغ واریزی</TableHead>
+              <TableHead>کاربر</TableHead>
+              <TableHead>کارت پرداخت‌کننده</TableHead>
+              <TableHead>زمان</TableHead>
+              <TableHead>وضعیت</TableHead>
+              <TableHead className="w-0">
+                <span className="sr-only">کارها</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {shown.map((t) => {
+              const reviewable = t.status === "submitted" || t.status === "pending" || t.status === "expired";
+              const { label, tone } = TOPUP_STATUS[t.status];
+              return (
+                <TableRow key={t.id}>
+                  <TableCell>
+                    <p className="text-lg font-bold whitespace-nowrap text-accent tabular-nums">{formatToman(t.amount)}</p>
+                    <p className="flex items-center gap-1 text-xs text-muted">
+                      <Coins className="size-3.5" />
+                      {formatPoints(t.points)}
+                    </p>
+                  </TableCell>
+                  <TableCell>
+                    {t.user ? (
+                      <div className="flex min-w-40 items-center gap-3">
+                        <Avatar user={t.user} />
+                        <div className="min-w-0 leading-6">
+                          <p className="truncate font-medium">{t.user.name || <span className="text-muted">بدون نام</span>}</p>
+                          <p className="text-xs text-muted">
+                            <Phone phone={t.user.phone} />
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-muted">حساب حذف شده</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {t.cardLast4 ? (
+                      <p dir="ltr" className="text-end whitespace-nowrap tabular-nums">
+                        •••• {toPersianDigits(t.cardLast4)}
+                      </p>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                    {t.reference && (
+                      <p className="text-xs text-muted">
+                        پیگیری: <span className="tabular-nums">{toPersianDigits(t.reference)}</span>
+                      </p>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <p className="whitespace-nowrap">{formatDateTime(t.submittedAt ?? t.createdAt)}</p>
+                    <p className="text-xs text-muted">{t.submittedAt ? "اعلام واریز" : "ساخت سفارش"}</p>
+                  </TableCell>
+                  <TableCell>
+                    <Badge tone={tone}>{label}</Badge>
+                    {t.note && <p className="mt-1 max-w-48 truncate text-xs text-muted">{t.note}</p>}
+                  </TableCell>
+                  <TableCell>
+                    {reviewable && (
+                      <div className="flex gap-1">
+                        <IconButton
+                          label="تأیید و افزودن پوینت"
+                          onClick={() => {
+                            setNote("");
+                            setReviewing({ topUp: t, action: "approve" });
+                          }}
+                        >
+                          <Check className="size-4 text-online" />
+                        </IconButton>
+                        <IconButton
+                          label="رد پرداخت"
+                          danger
+                          onClick={() => {
+                            setNote("");
+                            setReviewing({ topUp: t, action: "reject" });
+                          }}
+                        >
+                          <X className="size-4" />
+                        </IconButton>
+                      </div>
+                    )}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+      {reviewing && (
+        <ConfirmDialog
+          title={reviewing.action === "approve" ? "تأیید پرداخت" : "رد پرداخت"}
+          action={reviewing.action === "approve" ? `تأیید و افزودن ${formatPoints(reviewing.topUp.points)}` : "رد پرداخت"}
+          harmless={reviewing.action === "approve"}
+          onClose={() => setReviewing(undefined)}
+          onConfirm={review}
+        >
+          <p>
+            واریز <b className="tabular-nums">{formatToman(reviewing.topUp.amount)}</b>
+            {reviewing.topUp.cardLast4 && (
+              <>
+                {" "}
+                از کارتی که به <b className="tabular-nums">{toPersianDigits(reviewing.topUp.cardLast4)}</b> ختم می‌شود
+              </>
+            )}{" "}
+            از طرف {reviewing.topUp.user?.name || "این کاربر"}.
+          </p>
+          {reviewing.action === "approve" ? (
+            <p className="text-muted">فقط وقتی تأیید کنید که این مبلغ را در صورت‌حساب بانک دیده‌اید. این کار برگشت ندارد.</p>
+          ) : (
+            <label className="block space-y-1.5">
+              <span className="text-xs text-muted">دلیل (به کاربر نشان داده می‌شود)</span>
+              <input className="field" value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="مثلاً: واریزی با این مبلغ پیدا نشد" autoFocus />
+            </label>
+          )}
+        </ConfirmDialog>
+      )}
+    </section>
+  );
+}
+
 // ---- Overview ----------------------------------------------------------------------------------
 
 function Overview({ initial, onOpen }: { initial: AdminStatsDTO; onOpen: (tab: Tab) => void }) {
@@ -312,6 +498,7 @@ function Overview({ initial, onOpen }: { initial: AdminStatsDTO; onOpen: (tab: T
   };
 
   const cards: { label: string; value: number; meta: string; icon: typeof Users; tab?: Tab }[] = [
+    { label: "پرداخت‌های منتظر تأیید", value: stats.pendingTopUps, meta: "واریزهای کارت به کارت برای خرید پوینت", icon: Wallet, tab: "payments" },
     { label: "کاربران", value: stats.users, meta: `${fmt(stats.newUsers)} نفر در ۷ روز گذشته`, icon: Users, tab: "users" },
     { label: "آنلاین الان", value: stats.online, meta: `${fmt(stats.inVoice)} نفر در اتاق صوتی`, icon: Volume2 },
     { label: "سرورها", value: stats.servers, meta: `${fmt(stats.publicServers)} سرور در فهرست عمومی`, icon: ServerIcon, tab: "servers" },

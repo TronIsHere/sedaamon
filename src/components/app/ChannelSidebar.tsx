@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useParticipants } from "@livekit/components-react";
-import { Bell, BellOff, CalendarClock, ChevronDown, Clapperboard, FolderPlus, Hash, Link2, Loader2, Lock, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
+import { Bell, BellOff, CalendarClock, ChevronDown, Clapperboard, FolderPlus, Hash, Link2, Loader2, Lock, Megaphone, MessageSquarePlus, MicOff, Plus, Search, Settings, Volume2 } from "lucide-react";
 import { cn } from "@/lib/format";
 import { shareInvite } from "@/lib/invite";
 import { can } from "@/lib/permissions";
@@ -115,7 +115,13 @@ export default function ChannelSidebar({
       const muted = notify.effective(c.id, null).muted;
       return (
         <ChannelButton key={c.id} active={c.id === activeChannelId} onClick={() => onSelect(c)} className={cn(muted && c.id !== activeChannelId && "opacity-55")}>
-          {c.isPrivate ? <Lock className="size-4 shrink-0 opacity-70" aria-label="کانال خصوصی" /> : <Hash className="size-4 shrink-0 opacity-70" />}
+          {c.announcement ? (
+            <Megaphone className="size-4 shrink-0 opacity-70" aria-label="کانال اطلاع‌رسانی" />
+          ) : c.isPrivate ? (
+            <Lock className="size-4 shrink-0 opacity-70" aria-label="کانال خصوصی" />
+          ) : (
+            <Hash className="size-4 shrink-0 opacity-70" />
+          )}
           <span className={cn("truncate", count > 0 && "font-semibold text-fg")}>{c.name}</span>
           {muted && <BellOff className="size-3.5 shrink-0 opacity-70" aria-label="بی‌صدا" />}
           {count > 0 && <Badge count={pinged || count} ping={pinged > 0} className="ms-auto" />}

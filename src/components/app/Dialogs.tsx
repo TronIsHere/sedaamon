@@ -1,11 +1,12 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
-import { ArrowDown, ArrowUp, Camera, Clapperboard, Download, Hash, Loader2, Lock, LogOut, Trash2, Volume2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Camera, Clapperboard, Download, Gamepad2, Hash, House, Loader2, Lock, LogOut, Megaphone, PenOff, School, Sparkles, Trash2, Users, Volume2, X } from "lucide-react";
+import { SERVER_TEMPLATES, type ServerTemplate } from "@/lib/templates";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { PICTURE_HINT, resizeToAvatar } from "@/lib/image";
-import { can, standingOf } from "@/lib/permissions";
+import { can, SLOWMODE_STEPS, standingOf } from "@/lib/permissions";
 import { useCloseOnBack, useInstallPrompt } from "@/lib/mobile";
 import { toPersianDigits } from "@/lib/phone";
 import { getSocket } from "@/lib/socket";
@@ -87,16 +88,18 @@ export function SubmitButton({ busy, disabled, children }: { busy: boolean; disa
 export function ServerDialog({ invite, onClose, onDone }: { invite?: string; onClose: () => void; onDone: (s: ServerDTO) => void }) {
   const [mode, setMode] = useState<"create" | "join">(invite ? "join" : "create");
   const [value, setValue] = useState(invite ?? "");
+  const [templateId, setTemplateId] = useState(SERVER_TEMPLATES[0].id);
+  const template = SERVER_TEMPLATES.find((t) => t.id === templateId) ?? SERVER_TEMPLATES[0];
   const { busy, error, submit } = useSubmit(
     () =>
       mode === "create"
-        ? api<{ server: ServerDTO }>("/api/servers", { body: { name: value } })
+        ? api<{ server: ServerDTO }>("/api/servers", { body: { name: value, template: templateId } })
         : api<{ server: ServerDTO }>("/api/servers/join", { body: { code: value } }),
     (res) => onDone(res.server),
   );
 
   return (
-    <Modal title={mode === "create" ? "ساختن سرور" : "پیوستن به سرور"} onClose={onClose}>
+    <Modal title={mode === "create" ? "ساختن سرور" : "پیوستن به سرور"} onClose={onClose} wide={mode === "create"}>
       <div className="mb-4 grid grid-cols-2 gap-1 rounded-full bg-ink-850 p-1 text-sm">
         {(["create", "join"] as const).map((m) => (
           <button
@@ -112,6 +115,28 @@ export function ServerDialog({ invite, onClose, onDone }: { invite?: string; onC
         ))}
       </div>
       <form onSubmit={submit} className="space-y-4">
+        {mode === "create" && (
+          <fieldset className="space-y-2">
+            <legend className="mb-2 text-sm text-muted">از کجا شروع کنیم؟</legend>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {SERVER_TEMPLATES.map((t) => (
+                <label
+                  key={t.id}
+                  className={cn(
+                    "flex cursor-pointer flex-col gap-1.5 rounded-2xl border p-3 transition has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-accent",
+                    templateId === t.id ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
+                  )}
+                >
+                  <input type="radio" name="template" className="sr-only" checked={templateId === t.id} onChange={() => setTemplateId(t.id)} />
+                  <TemplateIcon icon={t.icon} active={templateId === t.id} />
+                  <span className="font-semibold">{t.name}</span>
+                  <span className="text-xs leading-5 text-muted">{t.hint}</span>
+                </label>
+              ))}
+            </div>
+            <TemplatePreview template={template} />
+          </fieldset>
+        )}
         <label className="block space-y-1.5">
           <span className="text-sm text-muted">{mode === "create" ? "نام سرور" : "لینک یا کد دعوت"}</span>
           <input
@@ -129,6 +154,55 @@ export function ServerDialog({ invite, onClose, onDone }: { invite?: string; onC
         </SubmitButton>
       </form>
     </Modal>
+  );
+}
+
+const TEMPLATE_ICONS = { sparkles: Sparkles, gamepad: Gamepad2, school: School, home: House, users: Users } as const;
+
+function TemplateIcon({ icon, active }: { icon: ServerTemplate["icon"]; active: boolean }) {
+  const Icon = TEMPLATE_ICONS[icon];
+  return (
+    <span className={cn("grid size-9 place-items-center rounded-xl", active ? "bg-accent-strong text-on-accent" : "bg-ink-800 text-muted")}>
+      <Icon className="size-5" />
+    </span>
+  );
+}
+
+/** What the picked template will make, so the choice isn't a guess. */
+function TemplatePreview({ template }: { template: ServerTemplate }) {
+  const iconOf = (c: ServerTemplate["categories"][number]["channels"][number]) =>
+    c.announcement ? Megaphone : c.type === "voice" ? Volume2 : c.type === "cinema" ? Clapperboard : c.postRoles ? PenOff : Hash;
+  return (
+    <div className="rounded-2xl bg-ink-850 p-3 ring-1 ring-line">
+      <div className="scrollbar-thin grid max-h-48 gap-3 overflow-y-auto sm:grid-cols-3">
+        {template.categories.map((g, i) => (
+          <div key={i} className="min-w-0">
+            {g.name && <p className="mb-1 truncate text-[11px] font-bold text-muted">{g.name}</p>}
+            <ul className="space-y-0.5">
+              {g.channels.map((c) => {
+                const Icon = iconOf(c);
+                return (
+                  <li key={c.name} className="flex items-center gap-1.5 text-sm">
+                    <Icon className="size-3.5 shrink-0 text-muted" />
+                    <span className="truncate">{c.name}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        ))}
+      </div>
+      {template.roles && (
+        <div className="mt-3 flex flex-wrap gap-1.5 border-t border-line pt-3">
+          {template.roles.map((r) => (
+            <span key={r.key} className="inline-flex items-center gap-1 rounded-full bg-ink-800 px-2 py-0.5 text-xs">
+              <span className="size-2 rounded-full" style={{ backgroundColor: r.color }} />
+              {r.name}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -227,6 +301,115 @@ function ChannelAccessFields({
   );
 }
 
+/** Who writes in a text channel and how often. Announcement channels are always limited to their writers. */
+export interface ChannelPostingValue {
+  posting: "everyone" | "roles";
+  postRoles: string[];
+  slowmode: number;
+  announcement: boolean;
+}
+
+const samePosting = (a: ChannelPostingValue, b: ChannelPostingValue) =>
+  a.announcement === b.announcement &&
+  a.slowmode === b.slowmode &&
+  (a.announcement || a.posting === b.posting) &&
+  JSON.stringify([...a.postRoles].sort()) === JSON.stringify([...b.postRoles].sort());
+
+export function slowmodeLabel(seconds: number) {
+  if (!seconds) return "خاموش";
+  if (seconds < 60) return `${toPersianDigits(seconds)} ثانیه`;
+  if (seconds < 3600) return `${toPersianDigits(seconds / 60)} دقیقه`;
+  return `${toPersianDigits(seconds / 3600)} ساعت`;
+}
+
+function ChannelPostingFields({
+  value,
+  roles: allRoles,
+  onChange,
+  showAnnouncement,
+}: {
+  value: ChannelPostingValue;
+  roles: RoleDTO[];
+  onChange: (v: ChannelPostingValue) => void;
+  /** The create dialog picks announcements as a kind of channel; the edit dialog turns it on and off here. */
+  showAnnouncement: boolean;
+}) {
+  // Those who manage channels always write, so listing their roles would only be noise.
+  const roles = allRoles.filter((r) => !r.permissions.includes("channel:manage"));
+  const limited = value.announcement || value.posting === "roles";
+  return (
+    <div className="space-y-3">
+      {showAnnouncement && (
+        <label
+          className={cn(
+            "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5",
+            value.announcement ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
+          )}
+        >
+          <input type="checkbox" className="sr-only" checked={value.announcement} onChange={(e) => onChange({ ...value, announcement: e.target.checked })} />
+          <Megaphone className="size-5 text-muted" />
+          <div>
+            <p className="font-semibold">کانال اطلاع‌رسانی</p>
+            <p className="text-xs text-muted">فقط مدیران و نقش‌هایی که انتخاب می‌کنید می‌نویسند؛ بقیه می‌خوانند و واکنش می‌گذارند</p>
+          </div>
+        </label>
+      )}
+      {!value.announcement && (
+        <label
+          className={cn(
+            "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5",
+            value.posting === "roles" ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
+          )}
+        >
+          <input type="checkbox" className="sr-only" checked={value.posting === "roles"} onChange={(e) => onChange({ ...value, posting: e.target.checked ? "roles" : "everyone" })} />
+          <PenOff className="size-5 text-muted" />
+          <div>
+            <p className="font-semibold">فقط خواندنی برای بقیه</p>
+            <p className="text-xs text-muted">فقط مدیران کانال و نقش‌هایی که انتخاب می‌کنید می‌توانند پیام بفرستند</p>
+          </div>
+        </label>
+      )}
+      {limited && (
+        <fieldset className="space-y-1.5">
+          <legend className="text-sm text-muted">نقش‌هایی که می‌نویسند</legend>
+          {roles.length ? (
+            <div className="flex flex-wrap gap-2">
+              {roles.map((r) => (
+                <label
+                  key={r.id}
+                  className={cn(
+                    "inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 text-sm",
+                    value.postRoles.includes(r.id) ? "border-accent bg-accent-strong/10" : "border-line text-muted hover:bg-ink-800",
+                  )}
+                >
+                  <input type="checkbox" className="sr-only" checked={value.postRoles.includes(r.id)} onChange={() => onChange({ ...value, postRoles: toggle(value.postRoles, r.id) })} />
+                  <span className="size-2 rounded-full" style={{ backgroundColor: r.color }} />
+                  {r.name}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted">نقش دیگری نیست؛ فقط مالک و مدیران کانال می‌نویسند.</p>
+          )}
+        </fieldset>
+      )}
+      <label className="block space-y-1.5">
+        <span className="text-sm text-muted">حالت آهسته</span>
+        <Select value={String(value.slowmode)} onChange={(e) => onChange({ ...value, slowmode: Number(e.target.value) })} className="text-sm">
+          {SLOWMODE_STEPS.map((n) => (
+            <option key={n} value={n}>
+              {n ? `هر نفر هر ${slowmodeLabel(n)} یک پیام` : "خاموش"}
+            </option>
+          ))}
+        </Select>
+        <span className="block text-xs text-muted">مدیران و ناظران از حالت آهسته مستثنا هستند.</span>
+      </label>
+    </div>
+  );
+}
+
+const NO_POSTING: ChannelPostingValue = { posting: "everyone", postRoles: [], slowmode: 0, announcement: false };
+
 /** Which category a channel sits in. Hidden while the server has none. */
 function CategoryField({ categories, value, onChange }: { categories: CategoryDTO[]; value: string | null; onChange: (id: string | null) => void }) {
   if (!categories.length) return null;
@@ -247,6 +430,7 @@ function CategoryField({ categories, value, onChange }: { categories: CategoryDT
 
 const CHANNEL_KINDS = {
   text: { label: "متنی", hint: "پیام، لینک و گفت‌وگوی نوشتاری" },
+  announcement: { label: "اطلاع‌رسانی", hint: "خبرها و اطلاعیه‌ها؛ فقط مدیران می‌نویسند" },
   voice: { label: "صوتی", hint: "گفت‌وگوی صوتی، تصویر و اشتراک صفحه" },
   cinema: { label: "سینما", hint: "کتابخانهٔ فیلم و تماشای هم‌زمان، همراه با گفت‌وگوی صوتی" },
 } as const;
@@ -270,12 +454,17 @@ export function CreateChannelDialog({
   onClose: () => void;
   onDone: (c: ChannelDTO) => void;
 }) {
-  const [type, setType] = useState(initialType);
+  const [kind, setKind] = useState<keyof typeof CHANNEL_KINDS>(initialType);
+  const type: ChannelType = kind === "announcement" ? "text" : kind;
   const [name, setName] = useState("");
   const [categoryId, setCategoryId] = useState(initialCategory);
   const [access, setAccess] = useState<ChannelAccessValue>({ isPrivate: false, allowedRoles: [], allowedMembers: [] });
+  const [posting, setPosting] = useState<ChannelPostingValue>(NO_POSTING);
   const { busy, error, submit } = useSubmit(
-    () => api<{ channel: ChannelDTO }>(`/api/servers/${serverId}/channels`, { body: { name, type, categoryId, ...access } }),
+    () =>
+      api<{ channel: ChannelDTO }>(`/api/servers/${serverId}/channels`, {
+        body: { name, type, categoryId, ...access, ...(type === "text" && { ...posting, announcement: kind === "announcement" }) },
+      }),
     (res) => onDone(res.channel),
   );
 
@@ -283,16 +472,24 @@ export function CreateChannelDialog({
     <Modal title="ساختن کانال" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <div className="space-y-2">
-          {(["text", "voice", "cinema"] as const).map((t) => (
+          {(["text", "announcement", "voice", "cinema"] as const).map((t) => (
             <label
               key={t}
               className={cn(
                 "flex cursor-pointer items-center gap-3 rounded-xl border px-3 py-2.5",
-                type === t ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
+                kind === t ? "border-accent bg-accent-strong/10" : "border-line hover:bg-ink-800",
               )}
             >
-              <input type="radio" className="sr-only" checked={type === t} onChange={() => setType(t)} />
-              {t === "text" ? <Hash className="size-5 text-muted" /> : t === "voice" ? <Volume2 className="size-5 text-muted" /> : <Clapperboard className="size-5 text-muted" />}
+              <input type="radio" className="sr-only" checked={kind === t} onChange={() => setKind(t)} />
+              {t === "text" ? (
+                <Hash className="size-5 text-muted" />
+              ) : t === "announcement" ? (
+                <Megaphone className="size-5 text-muted" />
+              ) : t === "voice" ? (
+                <Volume2 className="size-5 text-muted" />
+              ) : (
+                <Clapperboard className="size-5 text-muted" />
+              )}
               <div>
                 <p className="font-semibold">{CHANNEL_KINDS[t].label}</p>
                 <p className="text-xs text-muted">{CHANNEL_KINDS[t].hint}</p>
@@ -306,6 +503,7 @@ export function CreateChannelDialog({
         </label>
         <CategoryField categories={categories} value={categoryId} onChange={setCategoryId} />
         <ChannelAccessFields value={access} members={members} roles={roles} onChange={setAccess} />
+        {type === "text" && <ChannelPostingFields value={{ ...posting, announcement: kind === "announcement" }} roles={roles} onChange={setPosting} showAnnouncement={false} />}
         {error && <p className="text-sm text-danger">{error}</p>}
         <SubmitButton busy={busy} disabled={!name.trim()}>
           ساختن کانال
@@ -479,11 +677,13 @@ export function EditChannelDialog({
   const [categoryId, setCategoryId] = useState(channel.categoryId);
   const saved: ChannelAccessValue = { isPrivate: channel.isPrivate, allowedRoles: channel.allowedRoles, allowedMembers: channel.allowedMembers };
   const [access, setAccess] = useState<ChannelAccessValue>(saved);
+  const savedPosting: ChannelPostingValue = { posting: channel.posting, postRoles: channel.postRoles, slowmode: channel.slowmode, announcement: channel.announcement };
+  const [posting, setPosting] = useState<ChannelPostingValue>(savedPosting);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   // The server broadcasts the rename and the deletion, which updates every open screen including this one.
   const { busy, error, submit } = useSubmit(
-    () => api(`/api/channels/${channel.id}`, { method: "PATCH", body: { name, categoryId, ...access } }),
+    () => api(`/api/channels/${channel.id}`, { method: "PATCH", body: { name, categoryId, ...access, ...(channel.type === "text" && posting) } }),
     onClose,
   );
 
@@ -508,8 +708,12 @@ export function EditChannelDialog({
         </label>
         <CategoryField categories={categories} value={categoryId} onChange={setCategoryId} />
         <ChannelAccessFields value={access} members={members} roles={roles} onChange={setAccess} />
+        {channel.type === "text" && <ChannelPostingFields value={posting} roles={roles} onChange={setPosting} showAnnouncement />}
         {error && <p className="text-sm text-danger">{error}</p>}
-        <SubmitButton busy={busy} disabled={!name.trim() || (name.trim() === channel.name && categoryId === channel.categoryId && sameAccess(access, saved))}>
+        <SubmitButton
+          busy={busy}
+          disabled={!name.trim() || (name.trim() === channel.name && categoryId === channel.categoryId && sameAccess(access, saved) && samePosting(posting, savedPosting))}
+        >
           ذخیره
         </SubmitButton>
       </form>

@@ -10,6 +10,7 @@ import { statusLabel } from "@/lib/status";
 import { getSocket } from "@/lib/socket";
 import type { FriendState, MemberDTO, ProfileDTO, RoleDTO } from "@/lib/types";
 import Select from "@/components/ui/select";
+import { backgroundClass } from "@/lib/store";
 import Avatar from "./Avatar";
 import { BadgeShelf } from "./Badges";
 import { Modal } from "./Dialogs";
@@ -120,7 +121,7 @@ export default function ProfileCard({
         )
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center gap-4 rounded-2xl bg-ink-850 p-4 ring-1 ring-line">
+          <div className={cn("flex items-center gap-4 rounded-2xl p-4 ring-1 ring-line", profile.background ? cn("profile-bg min-h-28", backgroundClass(profile.background)) : "bg-ink-850")}>
             <Avatar user={profile} size="lg" online={online} />
             <div className="min-w-0 flex-1">
               <p className="truncate text-lg font-bold">{profile.name}</p>

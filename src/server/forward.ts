@@ -1,12 +1,14 @@
 import type { Types } from "mongoose";
+import { canPostIn } from "@/lib/permissions";
 import { isVoiceRoom, type ForwardTargetsDTO } from "@/lib/types";
 import { memberCanView } from "./access";
 import { openDm, listDms } from "./dms";
 import { listFriends } from "./friends";
-import { assertCanWrite, assertId, HttpError, requireMessageScope, type MessageScope } from "./http";
+import { assertCanPostIn, assertCanWrite, assertId, assertSlowmode, HttpError, requireMessageScope, type MessageScope } from "./http";
 import { serializeMessage } from "./messages";
 import { Channel, Member, Message, Server, User } from "./models";
 import { memberStanding, rolesByServer } from "./roles";
+import { toChannel } from "./serialize";
 
 const DM_SOURCE = "پیام مستقیم";
 
@@ -40,6 +42,8 @@ export async function forwardMessage(
   const dest = await requireMessageScope(targetId, user._id);
   if (isVoiceRoom(dest.type)) throw new HttpError(400, "این کانال متنی نیست");
   assertCanWrite(dest.member);
+  assertCanPostIn(dest);
+  await assertSlowmode(dest, targetId, user._id);
 
   let forwardedFrom = original.forwardedFrom ?? null;
   if (!forwardedFrom) {
@@ -78,7 +82,7 @@ export async function listForwardTargets(userId: Types.ObjectId): Promise<Forwar
     // Muted people and those who haven't accepted the rules can't write there, so there is no point offering it.
     if (!member || member.rulesPending || (member.mutedUntil && member.mutedUntil.getTime() > now)) return [];
     const viewer = { user: member.user, standing: memberStanding(member, roles.get(String(s._id)) ?? []) };
-    const list = channels.filter((c) => String(c.server) === String(s._id) && memberCanView(c, viewer)).map((c) => ({ id: String(c._id), name: c.name }));
+    const list = channels.filter((c) => String(c.server) === String(s._id) && memberCanView(c, viewer) && canPostIn(toChannel(c), viewer.standing)).map((c) => ({ id: String(c._id), name: c.name }));
     return list.length ? [{ id: String(s._id), name: s.name, channels: list }] : [];
   });
 

@@ -3,7 +3,7 @@
 import "@livekit/components-styles";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoomAudioRenderer, RoomContext } from "@livekit/components-react";
-import { Bell, BellOff, BellRing, Compass, Hash, Lock, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
+import { Bell, BellOff, BellRing, Compass, Hash, Lock, Megaphone, Menu, MessageCircle, PanelLeft, Phone, Search, Settings, Users, Volume2, VolumeX, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { messageSummary } from "@/lib/attachments";
 import { cn } from "@/lib/format";
@@ -38,7 +38,9 @@ import {
   type ServerDTO,
   type VoiceParticipant,
   type VoiceStates,
+  type TopUpDTO,
 } from "@/lib/types";
+import { formatPoints, OPEN_STORE_EVENT } from "@/lib/store";
 import Avatar from "./Avatar";
 import ChannelSidebar from "./ChannelSidebar";
 import ChatView from "./ChatView";
@@ -51,6 +53,7 @@ import NotificationsDialog, { PING_ICON, PING_TEXT } from "./NotificationsDialog
 import NotifyMenu from "./NotifyMenu";
 import ProfileCard from "./ProfileCard";
 import ProfileMenu from "./ProfileMenu";
+import StoreDialog, { type StoreTab } from "./StoreDialog";
 import ServerRail, { Badge } from "./ServerRail";
 import ServerSettingsDialog from "./ServerSettingsDialog";
 import VoiceBar from "./VoiceBar";
@@ -76,6 +79,7 @@ type Dialog =
   | { kind: "editChannel"; channelId: string }
   /** Null makes a new category. */
   | { kind: "category"; categoryId: string | null }
+  | { kind: "store"; tab?: StoreTab }
   | null;
 
 export default function App({
@@ -146,6 +150,13 @@ export default function App({
   const notify = useCallback((message: string) => {
     toast({ id: `notice:${message}`, title: message });
   }, [toast]);
+
+  // The profile menu and locked sticker packs open the store through a window event (see lib/store).
+  useEffect(() => {
+    const onOpen = (e: Event) => setDialog({ kind: "store", tab: (e as CustomEvent<StoreTab | null>).detail ?? undefined });
+    window.addEventListener(OPEN_STORE_EVENT, onOpen);
+    return () => window.removeEventListener(OPEN_STORE_EVENT, onOpen);
+  }, []);
 
   const { room, connection, connectionRef, joiningId, settings, canPlayAudio, startAudio, joinVoice, leaveVoice, dropCall } = useVoice({ notify });
   const { deafened } = settings;
@@ -371,9 +382,15 @@ export default function App({
       }
       if (connectionRef.current?.channelId === channelId) dropCall();
     };
+    // Points arrived (a top-up was confirmed) or were spent in another tab.
+    const onWallet = ({ points, inventory, topUp }: { points: number; inventory: string[]; topUp?: TopUpDTO }) => {
+      setMe((m) => ({ ...m, points, inventory }));
+      if (topUp?.status === "approved") notify(`پرداخت شما تأیید شد و ${formatPoints(topUp.points)} به کیف پولتان اضافه شد`);
+      else if (topUp?.status === "rejected") notify(topUp.note ? `پرداخت شما تأیید نشد: ${topUp.note}` : "پرداخت شما تأیید نشد");
+    };
     // A name, picture or status changed. Replace that person wherever they are on screen.
     const onUserUpdate = (u: UserDTO) => {
-      setMe((m) => (m.id === u.id ? { ...u, phone: m.phone, bio: m.bio } : m));
+      setMe((m) => (m.id === u.id ? { ...u, phone: m.phone, bio: m.bio, isAdmin: m.isAdmin, points: m.points, inventory: m.inventory } : m));
       setDetail((d) => (d?.members.some((m) => m.user.id === u.id) ? { ...d, members: d.members.map((m) => (m.user.id === u.id ? { ...m, user: u } : m)) } : d));
       const swap = (list: UserDTO[]) => list.map((x) => (x.id === u.id ? u : x));
       setFriends((f) => (f ? { ...f, friends: swap(f.friends), incoming: swap(f.incoming), outgoing: swap(f.outgoing) } : f));
@@ -496,6 +513,7 @@ export default function App({
     socket.on("presence", onPresence);
     socket.on("user:update", onUserUpdate);
     socket.on("friends:changed", refreshFriends);
+    socket.on("wallet:update", onWallet);
     return () => {
       socket.off("connect", onConnect);
       socket.off("message:new", onMessage);
@@ -522,6 +540,7 @@ export default function App({
       socket.off("presence", onPresence);
       socket.off("user:update", onUserUpdate);
       socket.off("friends:changed", refreshFriends);
+      socket.off("wallet:update", onWallet);
     };
   }, [initialMe.id, notify, toast, dismissToast, refreshFriends, refreshDms, refreshNotifications, dropCall, connectionRef, countMessage, markRead, dropServer]);
 
@@ -667,7 +686,7 @@ export default function App({
   const activeDm = dmMode ? (dms.find((d) => d.id === activeChannelId) ?? null) : null;
   // A conversation is shown through the same chat view as a text channel.
   const channel: ChannelDTO | null = activeDm
-    ? { id: activeDm.id, serverId: DM_SCOPE, name: activeDm.peer.name, type: "text", position: 0, categoryId: null, isPrivate: false, allowedRoles: [], allowedMembers: [] }
+    ? { id: activeDm.id, serverId: DM_SCOPE, name: activeDm.peer.name, type: "text", position: 0, categoryId: null, isPrivate: false, allowedRoles: [], allowedMembers: [], posting: "everyone", postRoles: [], slowmode: 0, announcement: false }
     : (currentDetail?.channels.find((c) => c.id === activeChannelId) ?? null);
   const dmMembers: MemberDTO[] = activeDm
     ? [
@@ -798,7 +817,7 @@ export default function App({
                 {channel && currentDetail && (
                   <div className="flex min-w-0 flex-1 items-center gap-3">
                     <span className="hidden size-10 shrink-0 place-items-center rounded-full bg-ink-900 text-fg sm:grid">
-                      {channel.type === "text" ? <Hash className="size-5" /> : <Volume2 className="size-5" />}
+                      {channel.announcement ? <Megaphone className="size-5" /> : channel.type === "text" ? <Hash className="size-5" /> : <Volume2 className="size-5" />}
                     </span>
                     <div className="min-w-0 leading-5">
                       <h2 className="flex items-center gap-1.5 text-lg font-bold md:text-xl">
@@ -1038,6 +1057,7 @@ export default function App({
             onNotify={notify}
           />
         )}
+        {dialog?.kind === "store" && <StoreDialog me={me} initialTab={dialog.tab} onMeChange={setMe} onClose={() => setDialog(null)} onNotify={notify} />}
         {dialog?.kind === "notifications" && (
           <NotificationsDialog
             notifications={notifications}

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { channelAudience } from "@/server/access";
-import { categoryOf, channelAccessInput, membersOf, rolesOf } from "@/server/channels";
+import { categoryOf, channelAccessInput, channelPostingInput, membersOf, postingFields, rolesOf } from "@/server/channels";
 import { assertPermission, handle, HttpError, requireMember, requireUser } from "@/server/http";
 import { Channel } from "@/server/models";
 import { emitToAudience } from "@/server/realtime";
@@ -12,7 +12,7 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/servers/[id]/chan
   const member = await requireMember(id, user._id);
   assertPermission(member, "channel:manage", "فقط مالک و مدیران سرور می‌توانند کانال بسازند");
 
-  const body = channelAccessInput.extend({ name: z.string(), type: z.enum(["text", "voice", "cinema"]) }).parse(await req.json());
+  const body = channelAccessInput.merge(channelPostingInput).extend({ name: z.string(), type: z.enum(["text", "voice", "cinema"]) }).parse(await req.json());
   const name = body.name.trim().replace(/\s+/g, "-");
   if (name.length < 1 || name.length > 32) throw new HttpError(400, "نام کانال باید بین ۱ تا ۳۲ حرف باشد");
 
@@ -27,6 +27,7 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/servers/[id]/chan
     isPrivate,
     allowedRoles: isPrivate ? await rolesOf(id, body.allowedRoles ?? []) : [],
     allowedMembers: isPrivate ? await membersOf(id, body.allowedMembers ?? []) : [],
+    ...(await postingFields(id, body.type, body)),
   });
   const channel = toChannel(doc);
   emitToAudience(id, await channelAudience(doc), "channel:new", channel);

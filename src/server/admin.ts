@@ -20,6 +20,7 @@ import {
   Session,
   Upload,
   User,
+  TopUp,
 } from "./models";
 import { clearVoiceChannel, emitToAudience, emitToServer, isOnline, realtime, serverRoom, userRoom } from "./realtime";
 import { avatarUrl, serverIconUrl } from "./serialize";
@@ -42,7 +43,7 @@ async function countBy(model: { collection: { aggregate: (pipeline: object[]) =>
 
 export async function adminStats(): Promise<AdminStatsDTO> {
   const weekAgo = new Date(Date.now() - 7 * DAY);
-  const [users, newUsers, servers, publicServers, channels, voiceChannels, messages, messagesWeek] = await Promise.all([
+  const [users, newUsers, servers, publicServers, channels, voiceChannels, messages, messagesWeek, pendingTopUps] = await Promise.all([
     User.estimatedDocumentCount(),
     User.countDocuments({ createdAt: { $gte: weekAgo } }),
     Server.estimatedDocumentCount(),
@@ -51,9 +52,10 @@ export async function adminStats(): Promise<AdminStatsDTO> {
     Channel.countDocuments({ type: { $in: VOICE_ROOM_TYPES } }),
     Message.estimatedDocumentCount(),
     Message.countDocuments({ createdAt: { $gte: weekAgo } }),
+    TopUp.countDocuments({ status: "submitted" }),
   ]);
   const inVoice = [...realtime.voice.values()].reduce((n, people) => n + people.size, 0);
-  return { users, newUsers, servers, publicServers, channels, voiceChannels, messages, messagesWeek, online: realtime.connections.size, inVoice };
+  return { users, newUsers, servers, publicServers, channels, voiceChannels, messages, messagesWeek, online: realtime.connections.size, inVoice, pendingTopUps };
 }
 
 // ---- Users -------------------------------------------------------------------------------------

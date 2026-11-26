@@ -85,6 +85,26 @@ export interface ChannelAccess {
 export const canViewChannel = (channel: ChannelAccess, s: Standing, userId: string) =>
   !channel.isPrivate || can(s, "channel:view_private") || channel.allowedRoles.some((r) => s.roles.includes(r)) || channel.allowedMembers.includes(userId);
 
+/** Who may write in a channel, and how often. Absent fields (channels made before these existed) mean "anyone, any time". */
+export interface ChannelPosting {
+  /** "roles": only the listed roles write; everyone else reads. Announcement channels are always "roles". */
+  posting?: "everyone" | "roles";
+  postRoles?: readonly string[];
+  /** Seconds each person waits between messages; 0 is off. */
+  slowmode?: number;
+  announcement?: boolean;
+}
+
+/** The slow-mode steps the channel settings offer, in seconds. */
+export const SLOWMODE_STEPS = [0, 5, 10, 30, 60, 120, 300, 600, 900, 1800, 3600] as const;
+
+/** Channel managers (and the owner) can always write, so a locked channel never locks out the people who run it. */
+export const canPostIn = (channel: ChannelPosting, s: Standing) =>
+  (channel.posting !== "roles" && !channel.announcement) || can(s, "channel:manage") || (channel.postRoles ?? []).some((r) => s.roles.includes(r));
+
+/** Those who run or moderate the server aren't slowed down. */
+export const skipsSlowmode = (s: Standing) => can(s, "channel:manage") || can(s, "member:moderate") || can(s, "message:delete_any");
+
 /** Moderation only ever goes downwards: you can act on someone strictly below your highest role. */
 export const outranks = (actor: Standing, target: Standing) => actor.rank > target.rank;
 

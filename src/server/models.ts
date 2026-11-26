@@ -19,6 +19,13 @@ const userSchema = new Schema(
     // What they said they came for and are into; used to suggest public servers.
     useCase: { type: String, default: "" },
     interests: { type: [String], default: [] },
+    // Seda Points: bought by card-to-card transfer (TopUp) and spent in the store. Every change is in WalletTx.
+    points: { type: Number, default: 0, min: 0 },
+    // Ids of store items bought (see lib/store).
+    inventory: { type: [String], default: [] },
+    // The look worn on the profile, out of the inventory.
+    frame: { type: String, default: null },
+    background: { type: String, default: null },
   },
   { timestamps: true },
 );
@@ -118,6 +125,12 @@ const channelSchema = new Schema(
     isPrivate: { type: Boolean, default: false },
     allowedRoles: { type: [String], default: [] },
     allowedMembers: { type: [{ type: ObjectId, ref: "User" }], default: [] },
+    // Text channels: who may write ("roles" means only postRoles, plus channel managers), and how often.
+    posting: { type: String, enum: ["everyone", "roles"], default: "everyone" },
+    postRoles: { type: [String], default: [] },
+    slowmode: { type: Number, default: 0 },
+    // News from those who run the server. Always posting "roles".
+    announcement: { type: Boolean, default: false },
     // Cinemas only: what is showing. While playing, the film is at position + (now - updatedAt).
     cinema: {
       type: new Schema(
@@ -217,6 +230,8 @@ const messageSchema = new Schema(
   { timestamps: true },
 );
 messageSchema.index({ channel: 1, _id: -1 });
+// Slow mode looks up each person's latest message in a channel.
+messageSchema.index({ channel: 1, author: 1, _id: -1 });
 messageSchema.index({ "attachments.key": 1 });
 
 // A file uploaded to a channel but not sent yet. It joins a message when sent; the sweeper in files.ts drops unsent
@@ -340,6 +355,45 @@ const serverBanSchema = new Schema(
 );
 serverBanSchema.index({ server: 1, user: 1 }, { unique: true });
 
+// An order for Seda Points paid by card-to-card transfer. The amount carries a small unique extra so the admin can
+// match a transfer to its order; while `open`, no other order may ask for the same amount.
+const topUpSchema = new Schema(
+  {
+    user: { type: ObjectId, ref: "User", required: true, index: true },
+    package: { type: String, required: true },
+    points: { type: Number, required: true },
+    // In toman: the package's price, and the exact sum to transfer.
+    price: { type: Number, required: true },
+    amount: { type: Number, required: true },
+    status: { type: String, enum: ["pending", "submitted", "approved", "rejected", "expired", "cancelled"], default: "pending", index: true },
+    open: { type: Boolean, default: true },
+    // What the buyer says about the transfer, to help find it in the statement.
+    cardLast4: { type: String, default: "" },
+    reference: { type: String, default: "" },
+    submittedAt: { type: Date, default: null },
+    expiresAt: { type: Date, required: true },
+    reviewedBy: { type: ObjectId, ref: "User", default: null },
+    reviewedAt: { type: Date, default: null },
+    // Why it was turned down, shown to the buyer.
+    note: { type: String, default: "" },
+  },
+  { timestamps: true },
+);
+topUpSchema.index({ amount: 1 }, { unique: true, partialFilterExpression: { open: true } });
+
+// Every change to someone's points, with the balance after it.
+const walletTxSchema = new Schema(
+  {
+    user: { type: ObjectId, ref: "User", required: true, index: true },
+    delta: { type: Number, required: true },
+    balance: { type: Number, required: true },
+    reason: { type: String, enum: ["topup", "purchase"], required: true },
+    item: { type: String, default: null },
+    topUp: { type: ObjectId, ref: "TopUp", default: null },
+  },
+  { timestamps: true },
+);
+
 type ModelOf<S extends Schema> = Model<InferSchemaType<S>>;
 
 function getModel<S extends Schema>(name: string, schema: S): ModelOf<S> {
@@ -366,3 +420,5 @@ export const Notification = getModel("Notification", notificationSchema);
 export const ReadState = getModel("ReadState", readStateSchema);
 export const NotifySetting = getModel("NotifySetting", notifySettingSchema);
 export const ServerBan = getModel("ServerBan", serverBanSchema);
+export const TopUp = getModel("TopUp", topUpSchema);
+export const WalletTx = getModel("WalletTx", walletTxSchema);

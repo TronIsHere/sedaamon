@@ -2,11 +2,12 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { Loader2, Settings, ShieldCheck, X } from "lucide-react";
+import { Coins, Loader2, Settings, ShieldCheck, ShoppingBag, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
 import { STATUSES } from "@/lib/status";
+import { formatNumber, openStore } from "@/lib/store";
 import type { MeDTO, Status } from "@/lib/types";
 import { Popover, type PopoverTriggerProps } from "@/components/ui/popover";
 import Avatar from "./Avatar";
@@ -43,6 +44,10 @@ export default function ProfileMenu({
           setOpen(false);
           onSettings();
         }}
+        onStore={() => {
+          setOpen(false);
+          openStore();
+        }}
       />
     </Popover>
   );
@@ -56,11 +61,13 @@ function QuickProfile({
   me,
   onMeChange,
   onSettings,
+  onStore,
   onNotify,
 }: {
   me: MeDTO;
   onMeChange: (me: MeDTO) => void;
   onSettings: () => void;
+  onStore: () => void;
   onNotify: (message: string) => void;
 }) {
   const [statusText, setStatusText] = useState(me.statusText ?? "");
@@ -126,6 +133,24 @@ function QuickProfile({
           <Settings className="size-5" />
         </button>
       </div>
+
+      <button
+        type="button"
+        onClick={onStore}
+        className="flex w-full items-center gap-3 rounded-xl bg-ink-850 px-3 py-2.5 text-start ring-1 ring-line transition hover:bg-ink-800"
+      >
+        <span className="grid size-8 place-items-center rounded-full bg-accent-strong text-on-accent">
+          <ShoppingBag className="size-4" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-semibold">فروشگاه</span>
+          <span className="block text-xs text-muted">قاب عکس، پس‌زمینه و استیکر</span>
+        </span>
+        <span className="flex items-center gap-1 text-sm font-bold text-accent tabular-nums">
+          <Coins className="size-4" />
+          {formatNumber(me.points ?? 0)}
+        </span>
+      </button>
 
       <div className="space-y-2">
         <div className="grid grid-cols-2 gap-1.5" role="radiogroup" aria-label="وضعیت">

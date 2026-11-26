@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/format";
 import { useCloseOnBack } from "@/lib/mobile";
+import { Lock } from "lucide-react";
 import { findSticker, STICKER_PACKS, type Sticker, type StickerStyle } from "@/lib/stickers";
+import { formatPoints, openStore, ownsStickerPack } from "@/lib/store";
 
 /** Points of an eight-pointed star (two overlapping squares), as in a Persian tile or illuminated medallion. */
 function starPoints(outer: number) {
@@ -78,7 +80,7 @@ function Drawn({ sticker, style }: { sticker: Sticker; style: StickerStyle }) {
 }
 
 /** The sticker tray above the composer. Picking one sends it right away. */
-export function StickerPicker({ onPick, onClose }: { onPick: (id: string) => void; onClose: () => void }) {
+export function StickerPicker({ inventory, onPick, onClose }: { inventory: readonly string[]; onPick: (id: string) => void; onClose: () => void }) {
   const [packId, setPackId] = useState(STICKER_PACKS[0].id);
   const ref = useRef<HTMLDivElement>(null);
   useCloseOnBack(true, onClose);
@@ -99,6 +101,7 @@ export function StickerPicker({ onPick, onClose }: { onPick: (id: string) => voi
   }, [onClose]);
 
   const pack = STICKER_PACKS.find((p) => p.id === packId) ?? STICKER_PACKS[0];
+  const locked = !ownsStickerPack(pack.id, inventory);
   return (
     <div
       ref={ref}
@@ -118,21 +121,42 @@ export function StickerPicker({ onPick, onClose }: { onPick: (id: string) => voi
               p.id === pack.id ? "bg-ink-700 text-fg" : "text-muted hover:text-fg",
             )}
           >
-            {p.name}
+            <span className="inline-flex items-center gap-1">
+              {!ownsStickerPack(p.id, inventory) && <Lock className="size-3" aria-label="قفل" />}
+              {p.name}
+            </span>
           </button>
         ))}
       </div>
-      <div role="tabpanel" className="scrollbar-thin grid max-h-72 grid-cols-4 gap-1 overflow-y-auto p-2">
-        {pack.stickers.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => onPick(s.id)}
-            title={s.text}
-            className="grid aspect-square place-items-center rounded-xl transition hover:bg-ink-700 active:scale-90"
-          >
-            <StickerArt id={s.id} size={72} />
-          </button>
-        ))}
+      <div role="tabpanel" className="relative">
+        <div className={cn("scrollbar-thin grid max-h-72 grid-cols-4 gap-1 overflow-y-auto p-2", locked && "pointer-events-none opacity-45 blur-[1px]")} aria-hidden={locked || undefined}>
+          {pack.stickers.map((s) => (
+            <button
+              key={s.id}
+              onClick={() => onPick(s.id)}
+              title={s.text}
+              tabIndex={locked ? -1 : undefined}
+              className="grid aspect-square place-items-center rounded-xl transition hover:bg-ink-700 active:scale-90"
+            >
+              <StickerArt id={s.id} size={72} />
+            </button>
+          ))}
+        </div>
+        {locked && (
+          <div className="absolute inset-0 grid place-items-center p-4">
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                openStore("stickers");
+              }}
+              className="btn-primary px-5 shadow-lg"
+            >
+              <Lock className="size-4" />
+              باز کردن با {formatPoints(pack.price ?? 0)}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

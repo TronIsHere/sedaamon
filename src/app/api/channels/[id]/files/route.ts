@@ -1,6 +1,6 @@
 import { isVoiceRoom } from "@/lib/types";
 import { MAX_FILE_BYTES } from "@/lib/attachments";
-import { assertCanWrite, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
+import { assertCanPostIn, assertCanWrite, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
 import { saveUpload } from "@/server/files";
 
 /** Room for the form's own fields around the file. */
@@ -13,6 +13,7 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/channels/[id]/fil
   const scope = await requireMessageScope(id, user._id);
   if (isVoiceRoom(scope.type)) throw new HttpError(400, "این کانال متنی نیست");
   assertCanWrite(scope.member);
+  assertCanPostIn(scope);
 
   // Turned away before the body is read, when the browser says up front that it is too big.
   if (Number(req.headers.get("content-length") ?? 0) > MAX_FILE_BYTES + FORM_SLACK) {

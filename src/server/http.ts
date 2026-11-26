@@ -2,13 +2,14 @@ import { cookies } from "next/headers";
 import { connection } from "next/server";
 import { isValidObjectId, type Types } from "mongoose";
 import { z } from "zod";
-import { can, NO_STANDING, type Permission, type Standing } from "@/lib/permissions";
+import { can, canPostIn, NO_STANDING, skipsSlowmode, type ChannelPosting, type Permission, type Standing } from "@/lib/permissions";
+import { toPersianDigits } from "@/lib/phone";
 import { DM_SCOPE } from "@/lib/types";
 import { connectDB } from "./db";
 import { HttpError } from "./errors";
 import { channelAudience, memberCanView } from "./access";
 import { isAdminPhone } from "./admins";
-import { Channel, Conversation } from "./models";
+import { Channel, Conversation, Message } from "./models";
 import { emitToAudience, emitToUsers } from "./realtime";
 import { findMemberWithStanding } from "./roles";
 import { SESSION_COOKIE, userFromToken } from "./session";
@@ -87,6 +88,8 @@ export interface MessageScope {
   emit: (event: string, payload: unknown) => void;
   /** Records that a message was just sent. */
   touch: () => Promise<unknown>;
+  /** Who may write here and how often; null in a direct conversation, where there are no such rules. */
+  posting: ChannelPosting | null;
 }
 
 export async function requireMessageScope(channelId: string, userId: Types.ObjectId): Promise<MessageScope> {
@@ -105,6 +108,7 @@ export async function requireMessageScope(channelId: string, userId: Types.Objec
       audience: audience && new Set(audience),
       emit: (event, payload) => emitToAudience(serverId, audience, event, payload),
       touch: async () => {},
+      posting: { posting: channel.posting ?? "everyone", postRoles: channel.postRoles ?? [], slowmode: channel.slowmode ?? 0, announcement: !!channel.announcement },
     };
   }
 
@@ -119,6 +123,7 @@ export async function requireMessageScope(channelId: string, userId: Types.Objec
     audience: null,
     emit: (event, payload) => emitToUsers(people, event, payload),
     touch: () => Conversation.updateOne({ _id: channelId }, { lastMessageAt: new Date() }),
+    posting: null,
   };
 }
 
@@ -126,6 +131,25 @@ export async function requireMessageScope(channelId: string, userId: Types.Objec
 export function assertCanWrite(member: { mutedUntil?: Date | null; rulesPending?: boolean }) {
   if (member.mutedUntil && member.mutedUntil.getTime() > Date.now()) throw new HttpError(403, "شما در این سرور بی‌صدا شده‌اید");
   if (member.rulesPending) throw new HttpError(403, "برای شرکت در گفت‌وگو، ابتدا قوانین سرور را بپذیرید");
+}
+
+/** Read-only channels turn away everyone but their writers; read the scope's `posting` for the reason shown. */
+export function assertCanPostIn(scope: Pick<MessageScope, "posting" | "member">) {
+  if (scope.posting && !canPostIn(scope.posting, scope.member.standing)) {
+    throw new HttpError(403, scope.posting.announcement ? "در کانال اطلاع‌رسانی فقط مدیران می‌نویسند" : "در این کانال فقط نقش‌های مشخصی می‌توانند بنویسند");
+  }
+}
+
+/**
+ * Slow mode: each person waits between messages in the channel. The people who run the server are not slowed.
+ * Says how many seconds are left, so the composer can count down.
+ */
+export async function assertSlowmode(scope: Pick<MessageScope, "posting" | "member">, channelId: string, userId: Types.ObjectId) {
+  const wait = scope.posting?.slowmode ?? 0;
+  if (!wait || skipsSlowmode(scope.member.standing)) return;
+  const last = await Message.findOne({ channel: channelId, author: userId }, { createdAt: 1 }).sort({ _id: -1 }).lean();
+  const left = last ? Math.ceil(wait - (Date.now() - last.createdAt.getTime()) / 1000) : 0;
+  if (left > 0) throw new HttpError(429, `حالت آهسته روشن است. ${toPersianDigits(left)} ثانیهٔ دیگر می‌توانید بنویسید`);
 }
 
 export function assertPermission(member: { standing: Standing }, permission: Permission, message = "اجازهٔ این کار را ندارید") {

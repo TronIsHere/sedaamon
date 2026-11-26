@@ -1,6 +1,7 @@
 import type { Types } from "mongoose";
 import { NEWCOMER_MS } from "@/lib/badges";
 import type { Standing } from "@/lib/permissions";
+import { backgroundClass, frameClass } from "@/lib/store";
 import type { BadgeId, CategoryDTO, ChannelDTO, MeDTO, MemberDTO, ServerDTO, Status, UserDTO } from "@/lib/types";
 import { isAdminPhone } from "./admins";
 
@@ -13,6 +14,10 @@ interface UserDoc {
   avatarAt?: Date | null;
   status?: string | null;
   statusText?: string | null;
+  frame?: string | null;
+  background?: string | null;
+  points?: number | null;
+  inventory?: string[] | null;
 }
 
 export const avatarUrl = (userId: string, at: Date) => `/api/users/${userId}/avatar?v=${at.getTime()}`;
@@ -23,10 +28,20 @@ export const toUser = (u: UserDoc): UserDTO => {
   if (u.avatarAt) dto.avatar = avatarUrl(id, u.avatarAt);
   if (u.status && u.status !== "available") dto.status = u.status as Status;
   if (u.statusText) dto.statusText = u.statusText;
+  // Only looks still in the catalogue are shown; one taken out of the store simply disappears.
+  if (frameClass(u.frame)) dto.frame = u.frame!;
+  if (backgroundClass(u.background)) dto.background = u.background!;
   return dto;
 };
 
-export const toMe = (u: UserDoc & { phone: string }): MeDTO => ({ ...toUser(u), phone: u.phone, bio: u.bio ?? "", isAdmin: isAdminPhone(u.phone) });
+export const toMe = (u: UserDoc & { phone: string }): MeDTO => ({
+  ...toUser(u),
+  phone: u.phone,
+  bio: u.bio ?? "",
+  isAdmin: isAdminPhone(u.phone),
+  points: u.points ?? 0,
+  inventory: u.inventory ?? [],
+});
 
 interface MemberDoc {
   owner?: boolean | null;
@@ -79,6 +94,10 @@ export const toChannel = (c: {
   isPrivate?: boolean | null;
   allowedRoles?: string[] | null;
   allowedMembers?: Types.ObjectId[] | null;
+  posting?: "everyone" | "roles" | null;
+  postRoles?: string[] | null;
+  slowmode?: number | null;
+  announcement?: boolean | null;
 }): ChannelDTO => ({
   id: String(c._id),
   serverId: String(c.server),
@@ -90,4 +109,8 @@ export const toChannel = (c: {
   // Channels made before private ones existed have neither list.
   allowedRoles: c.isPrivate ? (c.allowedRoles ?? []) : [],
   allowedMembers: c.isPrivate ? (c.allowedMembers ?? []).map(String) : [],
+  posting: c.announcement || c.posting === "roles" ? "roles" : "everyone",
+  postRoles: c.announcement || c.posting === "roles" ? (c.postRoles ?? []) : [],
+  slowmode: c.slowmode ?? 0,
+  announcement: !!c.announcement,
 });

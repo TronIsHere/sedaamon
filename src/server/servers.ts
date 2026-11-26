@@ -3,6 +3,7 @@ import type { Types } from "mongoose";
 import { CATEGORY_IDS, cleanTags, MAX_DESCRIPTION, MIN_DESCRIPTION } from "@/lib/discovery";
 import { foldForSearch, matchesSearch } from "@/lib/search";
 import { NO_STANDING } from "@/lib/permissions";
+import { findTemplate } from "@/lib/templates";
 import { isVoiceRoom, type DiscoverDTO, type DiscoverySettingsDTO, type MemberDTO, type ServerDetailDTO, type ServerDTO, type WelcomeDTO } from "@/lib/types";
 import { memberCanView } from "./access";
 import { isBanned } from "./bans";
@@ -83,14 +84,46 @@ const toWelcome = (s: Pick<ServerDoc, "welcome">, visibleChannels?: Set<string>)
   channelIds: (s.welcome?.channels ?? []).map(String).filter((id) => !visibleChannels || visibleChannels.has(id)),
 });
 
-export async function createServer(name: string, ownerId: Types.ObjectId) {
-  const server = await Server.create({ name, owner: ownerId, inviteCode: newInviteCode() });
+/** Makes a server from a template (see lib/templates): its roles, categories, channels and welcome screen. */
+export async function createServer(name: string, ownerId: Types.ObjectId, templateId?: string) {
+  const template = findTemplate(templateId);
+  const server = await Server.create({
+    name,
+    owner: ownerId,
+    inviteCode: newInviteCode(),
+    // Ready to switch on; nobody is asked to accept rules until the owner chooses that.
+    ...(template.welcome && { welcome: { enabled: true, title: template.welcome.title, message: template.welcome.message, rules: template.welcome.rules, requireRules: false, channels: [] } }),
+  });
   const member = await Member.create({ server: server._id, user: ownerId, owner: true, joinedVia: "owner" });
-  await createDefaultRoles(server._id);
-  await Channel.create([
-    { server: server._id, name: "عمومی", type: "text", position: 0 },
-    { server: server._id, name: "اتاق صوتی", type: "voice", position: 1 },
-  ]);
+
+  const roleIds = new Map<string, string>();
+  if (template.roles) {
+    const made = await ServerRole.create(
+      template.roles.map((r, i) => ({ server: server._id, name: r.name, color: r.color, permissions: r.permissions, position: template.roles!.length - i })),
+    );
+    template.roles.forEach((r, i) => roleIds.set(r.key, String(made[i]._id)));
+  } else {
+    await createDefaultRoles(server._id);
+  }
+
+  let position = 0;
+  for (const [i, group] of template.categories.entries()) {
+    const category = group.name ? await Category.create({ server: server._id, name: group.name, position: i }) : null;
+    await Channel.create(
+      group.channels.map((c) => {
+        const postRoles = (c.postRoles ?? []).flatMap((key) => roleIds.get(key) ?? []);
+        const limited = c.announcement || !!c.postRoles;
+        return {
+          server: server._id,
+          name: c.name,
+          type: c.type,
+          position: position++,
+          category: category?._id ?? null,
+          ...(c.type === "text" && { announcement: !!c.announcement, posting: (limited ? "roles" : "everyone") as "roles" | "everyone", postRoles: limited ? postRoles : [], slowmode: c.slowmode ?? 0 }),
+        };
+      }),
+    );
+  }
   subscribeUserToServer(String(ownerId), String(server._id));
   return toServer(server, memberStanding(member, []));
 }

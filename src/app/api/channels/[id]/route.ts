@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { channelAudience } from "@/server/access";
-import { broadcastChannelChange, categoryOf, channelAccessInput, detachEvents, membersOf, rolesOf } from "@/server/channels";
+import { broadcastChannelChange, categoryOf, channelAccessInput, channelPostingInput, detachEvents, membersOf, postingFields, rolesOf } from "@/server/channels";
 import { filesOfChannels, releaseFiles } from "@/server/files";
 import { assertPermission, handle, HttpError, requireChannelAccess, requireUser } from "@/server/http";
 import { Channel, Event, Message } from "@/server/models";
@@ -22,8 +22,8 @@ export const PATCH = handle(async (req, ctx: RouteContext<"/api/channels/[id]">)
   const { channel: before, member } = await requireChannelAccess(id, user._id);
   assertPermission(member, "channel:manage", "فقط مالک و مدیران سرور می‌توانند کانال را ویرایش کنند");
 
-  const body = channelAccessInput.extend({ name: z.string().optional() }).parse(await req.json());
-  const update: Record<string, unknown> = {};
+  const body = channelAccessInput.merge(channelPostingInput).extend({ name: z.string().optional() }).parse(await req.json());
+  const update: Record<string, unknown> = await postingFields(String(before.server), before.type, body, before);
 
   if (body.name !== undefined) {
     const clean = body.name.trim().replace(/\s+/g, "-");

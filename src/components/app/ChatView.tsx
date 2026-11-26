@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent } from "react";
-import { ArrowUp, AtSign, BellOff, ChevronDown, CornerUpLeft, Paperclip, ScrollText, SearchX, SendHorizontal, Sticker as StickerIcon, X } from "lucide-react";
+import { ArrowUp, AtSign, BellOff, ChevronDown, CornerUpLeft, Megaphone, Paperclip, ScrollText, SearchX, SendHorizontal, Sticker as StickerIcon, Timer, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { IMAGE_TYPES, MAX_ATTACHMENTS, MAX_FILE_BYTES, messageSummary } from "@/lib/attachments";
 import { cn, formatDateTime, formatDay, sameDay } from "@/lib/format";
@@ -9,7 +9,7 @@ import { prepareImage } from "@/lib/image";
 import { revealMedia } from "@/lib/media";
 import { EVERYONE, hasMention, pingsUser } from "@/lib/mentions";
 import { isTouchDevice } from "@/lib/mobile";
-import { can, canViewChannel, isMuted, msUntil, NO_STANDING, outranks, standingOf } from "@/lib/permissions";
+import { can, canPostIn, canViewChannel, isMuted, msUntil, NO_STANDING, outranks, skipsSlowmode, standingOf } from "@/lib/permissions";
 import { toPersianDigits } from "@/lib/phone";
 import { foldForSearch, matchesSearch } from "@/lib/search";
 import { getSocket } from "@/lib/socket";
@@ -30,7 +30,7 @@ import {
 } from "@/lib/types";
 import Avatar from "./Avatar";
 import { MessagesSkeleton, PageEdge, PendingFiles, PinList, TypingLine, type PendingFile } from "./ChatParts";
-import { Modal } from "./Dialogs";
+import { Modal, slowmodeLabel } from "./Dialogs";
 import ForwardDialog from "./ForwardDialog";
 import MessageItem, { type MessageActions } from "./MessageItem";
 import { StickerPicker } from "./Stickers";
@@ -186,7 +186,29 @@ export default function ChatView({
   const memberById = useMemo(() => new Map(members.map((m) => [m.user.id, m])), [members]);
   const myMember = memberById.get(me.id);
   const myStanding = useMemo(() => (myMember ? standingOf(myMember, roles) : NO_STANDING), [myMember, roles]);
-  const muted = isMuted(myMember?.mutedUntil) || rulesPending;
+  // Muted or still to accept the rules: no writing anywhere in the server, not even reactions.
+  const silenced = isMuted(myMember?.mutedUntil) || rulesPending;
+  // A read-only channel (announcements, or writing kept to some roles) still takes reactions.
+  const readOnly = !dm && !canPostIn(channel, myStanding);
+  const muted = silenced || readOnly;
+  // Slow mode counts from your own latest message here; those who run the server aren't slowed.
+  const slowmode = !dm && !skipsSlowmode(myStanding) ? channel.slowmode : 0;
+  let myLastAt = 0;
+  if (slowmode) {
+    for (let i = messages.length - 1; i >= 0 && !myLastAt; i--) if (messages[i].author.id === me.id) myLastAt = new Date(messages[i].createdAt).getTime();
+  }
+  const [now, setNow] = useState(() => Date.now());
+  const slowLeft = slowmode && myLastAt ? Math.max(0, Math.ceil(slowmode - (now - myLastAt) / 1000)) : 0;
+  useEffect(() => {
+    if (!slowmode || !myLastAt) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the clock starts from the latest message
+    setNow(Date.now());
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+      if (Date.now() - myLastAt > slowmode * 1000) window.clearInterval(timer);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [slowmode, myLastAt]);
 
   // "@" followed by letters right before the cursor opens the member menu (not in direct messages, where there is nobody to ping).
   const word = dm || muted ? null : /(^|[\s(])@([^\s@]*)$/u.exec(draft.slice(0, caret));
@@ -520,7 +542,7 @@ export default function ChatView({
   };
 
   const uploading = pending.some((f) => !f.id);
-  const canSend = (!!draft.trim() || pending.length > 0) && !uploading;
+  const canSend = (!!draft.trim() || pending.length > 0) && !uploading && !slowLeft;
 
   const send = async () => {
     const content = draft.trim();
@@ -562,6 +584,7 @@ export default function ChatView({
   /** Uploads a just-recorded voice note and sends it on its own, as a reply if one was being written. */
   const sendVoiceNote = async (note: VoiceNote) => {
     if (muted) return;
+    if (slowLeft) return setError(`حالت آهسته روشن است. ${toPersianDigits(slowLeft)} ثانیهٔ دیگر می‌توانید بنویسید`);
     if (note.blob.size > MAX_FILE_BYTES) return setError("پیام صوتی بیشتر از ۵ مگابایت است");
     setError(undefined);
     setSendingVoice(true);
@@ -660,6 +683,7 @@ export default function ChatView({
 
   const sendSticker = async (sticker: string) => {
     if (muted) return;
+    if (slowLeft) return setError(`حالت آهسته روشن است. ${toPersianDigits(slowLeft)} ثانیهٔ دیگر می‌توانید بنویسید`);
     setError(undefined);
     setStickersOpen(false);
     const replying = replyTo;
@@ -860,7 +884,7 @@ export default function ChatView({
                 </span>
               )}
               <h3 className="mt-4 text-xl font-bold">{dm ? `گفت‌وگو با ${dm.name}` : `به #${channel.name} خوش آمدید`}</h3>
-              <p className="mt-1 text-sm text-muted">هنوز پیامی نیست. اولین پیام را بفرستید.</p>
+              <p className="mt-1 text-sm text-muted">{readOnly ? "هنوز پیامی اینجا نیست." : "هنوز پیامی نیست. اولین پیام را بفرستید."}</p>
             </div>
           )}
           {q && !shown.length && (
@@ -908,7 +932,7 @@ export default function ChatView({
                   roles={roles}
                   authorBadges={author?.badges}
                   authorOnline={memberById.has(m.author.id) ? !!online[m.author.id] : undefined}
-                  canWrite={!muted}
+                  canWrite={!silenced}
                   canDelete={mine || (can(myStanding, "message:delete_any") && outranks(myStanding, author ? standingOf(author, roles) : NO_STANDING))}
                   canPin={can(myStanding, "message:pin")}
                   selected={selected?.id === m.id}
@@ -951,6 +975,13 @@ export default function ChatView({
                 <ScrollText className="size-4 shrink-0" />
                 <span>برای نوشتن پیام، ابتدا قوانین سرور را بخوانید و بپذیرید.</span>
               </button>
+            ) : readOnly && !silenced ? (
+              <div className="flex items-center gap-3 rounded-2xl bg-ink-800 px-4 py-3 text-sm text-muted ring-1 ring-line">
+                <Megaphone className="size-4 shrink-0" />
+                <span>
+                  {channel.announcement ? "این کانال اطلاع‌رسانی است. فقط مدیران سرور در آن می‌نویسند." : "در این کانال فقط نقش‌های مشخصی می‌توانند بنویسند. شما می‌توانید بخوانید و واکنش بگذارید."}
+                </span>
+              </div>
             ) : muted && myMember?.mutedUntil ? (
               <div className="flex items-center gap-3 rounded-2xl bg-amber-400/10 px-4 py-3 text-sm text-amber-200 ring-1 ring-amber-400/20">
                 <BellOff className="size-4 shrink-0" />
@@ -973,7 +1004,7 @@ export default function ChatView({
               </div>
             )}
             <div className="relative">
-            {stickersOpen && <StickerPicker onPick={sendSticker} onClose={closeStickers} />}
+            {stickersOpen && <StickerPicker inventory={me.inventory} onPick={sendSticker} onClose={closeStickers} />}
             {pending.length > 0 && <PendingFiles files={pending} onRemove={removePending} />}
             {candidates.length > 0 && (
               <ul
@@ -1025,7 +1056,7 @@ export default function ChatView({
                 onSelect={(e) => setCaret(e.currentTarget.selectionStart)}
                 onKeyDown={onKeyDown}
                 onPaste={onPaste}
-                placeholder={dm ? `پیام به ${dm.name}` : `پیام به #${channel.name}`}
+                placeholder={dm ? `پیام به ${dm.name}` : slowmode ? `پیام به #${channel.name} · حالت آهسته: ${slowmodeLabel(slowmode)}` : `پیام به #${channel.name}`}
                 className="bidi-lines field-sizing-content max-h-40 flex-1 resize-none bg-transparent py-1.5 text-base md:text-sm leading-7 outline-none placeholder:text-muted"
               />
               <input
@@ -1060,7 +1091,17 @@ export default function ChatView({
                 <StickerIcon className="size-5" />
               </button>
               {/* With nothing typed or attached, the send button becomes the hold-to-record button, as in other messengers. */}
-              {canRecord && !draft.trim() && !pending.length ? (
+              {slowLeft > 0 ? (
+                <span
+                  role="timer"
+                  aria-label={`حالت آهسته: ${toPersianDigits(slowLeft)} ثانیه تا پیام بعدی`}
+                  title="حالت آهسته"
+                  className="flex h-10 shrink-0 items-center gap-1 rounded-full bg-ink-700 px-3 text-xs font-semibold tabular-nums text-muted"
+                >
+                  <Timer className="size-4" />
+                  {toPersianDigits(slowLeft)}
+                </span>
+              ) : canRecord && !draft.trim() && !pending.length ? (
                 <VoiceRecordButton sending={sendingVoice} onRecording={setRecording} onRecorded={sendVoiceNote} onError={setError} />
               ) : (
                 <button

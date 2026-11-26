@@ -1,5 +1,6 @@
 import { cn } from "@/lib/format";
 import { STATUSES } from "@/lib/status";
+import { frameClass } from "@/lib/store";
 import type { UserDTO } from "@/lib/types";
 
 export default function Avatar({
@@ -8,13 +9,13 @@ export default function Avatar({
   speaking = false,
   online,
 }: {
-  user: Pick<UserDTO, "name" | "color" | "avatar" | "status">;
+  user: Pick<UserDTO, "name" | "color" | "avatar" | "status" | "frame">;
   size?: "sm" | "md" | "lg";
   speaking?: boolean;
   /** When set, a presence dot is drawn on the avatar: grey for offline, otherwise coloured by the person's status. */
   online?: boolean;
 }) {
-  const circle = (
+  const picture = (
     <span
       className={cn(
         "grid shrink-0 place-items-center overflow-hidden rounded-full font-semibold text-white ring-2 transition-shadow duration-200",
@@ -32,6 +33,17 @@ export default function Avatar({
         (user.name.trim()[0] ?? "?")
       )}
     </span>
+  );
+  // A store frame: a ring just outside the picture (see globals.css). Too fine to read at the smallest size.
+  const ring = size !== "sm" ? frameClass(user.frame) : undefined;
+  const circle = ring ? (
+    <span className="relative inline-grid shrink-0 place-items-center">
+      <span aria-hidden className={cn("avatar-frame-glow", ring.replace("frame-", "glow-"))} />
+      {picture}
+      <span aria-hidden data-size={size} className={cn("avatar-frame", ring)} />
+    </span>
+  ) : (
+    picture
   );
   if (online === undefined) return circle;
 

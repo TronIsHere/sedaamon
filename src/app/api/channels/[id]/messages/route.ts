@@ -3,7 +3,8 @@ import { isValidObjectId } from "mongoose";
 import { z } from "zod";
 import { MAX_ATTACHMENTS } from "@/lib/attachments";
 import { findSticker } from "@/lib/stickers";
-import { assertId, assertCanWrite, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
+import { ownsStickerPack } from "@/lib/store";
+import { assertId, assertCanPostIn, assertCanWrite, assertSlowmode, handle, HttpError, requireMessageScope, requireUser } from "@/server/http";
 import { claimUploads } from "@/server/files";
 import { serializeMessage, serializeMessages } from "@/server/messages";
 import { Message } from "@/server/models";
@@ -62,6 +63,8 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/channels/[id]/mes
   const scope = await requireMessageScope(id, user._id);
   if (isVoiceRoom(scope.type)) throw new HttpError(400, "این کانال متنی نیست");
   assertCanWrite(scope.member);
+  assertCanPostIn(scope);
+  await assertSlowmode(scope, id, user._id);
 
   const { content = "", sticker: stickerId, replyTo, mentions: mentionIds = [], attachments: fileIds = [] } = z
     .object({
@@ -75,6 +78,8 @@ export const POST = handle(async (req, ctx: RouteContext<"/api/channels/[id]/mes
   // A sticker message carries the sticker's own text, so it reads naturally in previews, replies and search.
   const sticker = stickerId ? findSticker(stickerId)?.sticker : null;
   if (stickerId && !sticker) throw new HttpError(400, "این استیکر پیدا نشد");
+  // Store packs are sent only by those who bought them.
+  if (sticker && !ownsStickerPack(sticker.id.split("/")[0], user.inventory)) throw new HttpError(403, "این بستهٔ استیکر را اول از فروشگاه بخرید");
   const text = sticker ? sticker.text : content.trim();
   if (!text && !fileIds.length) throw new HttpError(400, "پیام خالی است");
   if (text.length > 2000) throw new HttpError(400, "پیام نباید بیشتر از ۲۰۰۰ حرف باشد");
