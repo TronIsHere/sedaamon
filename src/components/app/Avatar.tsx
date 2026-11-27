@@ -2,6 +2,7 @@ import { cn } from "@/lib/format";
 import { STATUSES } from "@/lib/status";
 import { frameClass } from "@/lib/store";
 import type { UserDTO } from "@/lib/types";
+import FrameArt, { hasFrameArt } from "./FrameArt";
 
 export default function Avatar({
   user,
@@ -34,17 +35,25 @@ export default function Avatar({
       )}
     </span>
   );
-  // A store frame: a ring just outside the picture (see globals.css). Too fine to read at the smallest size.
-  const ring = size !== "sm" ? frameClass(user.frame) : undefined;
-  const circle = ring ? (
-    <span className="relative inline-grid shrink-0 place-items-center">
-      <span aria-hidden className={cn("avatar-frame-glow", ring.replace("frame-", "glow-"))} />
-      {picture}
-      <span aria-hidden data-size={size} className={cn("avatar-frame", ring)} />
-    </span>
-  ) : (
-    picture
-  );
+  // A store frame, too fine to read at the smallest size: drawn art over the picture (FrameArt), or a plain ring just
+  // outside it (globals.css).
+  const frame = size !== "sm" ? user.frame : undefined;
+  const ring = frame && !hasFrameArt(frame) ? frameClass(frame) : undefined;
+  const circle =
+    frame && hasFrameArt(frame) ? (
+      <span className="relative inline-grid shrink-0 place-items-center">
+        {picture}
+        <FrameArt frame={frame} />
+      </span>
+    ) : ring ? (
+      <span className="relative inline-grid shrink-0 place-items-center">
+        <span aria-hidden className={cn("avatar-frame-glow", ring.replace("frame-", "glow-"))} />
+        {picture}
+        <span aria-hidden data-size={size} className={cn("avatar-frame", ring)} />
+      </span>
+    ) : (
+      picture
+    );
   if (online === undefined) return circle;
 
   return (

@@ -200,7 +200,11 @@ function ItemCard({
       <div className="flex flex-1 flex-col gap-1 p-3">
         <div className="flex items-center gap-2">
           <h3 className="font-bold">{item.name}</h3>
-          {item.animated && <span className="rounded-full bg-ink-700 px-2 py-0.5 text-[11px] text-muted">متحرک</span>}
+          {item.special ? (
+            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-semibold text-accent">ویژه</span>
+          ) : (
+            item.animated && <span className="rounded-full bg-ink-700 px-2 py-0.5 text-[11px] text-muted">متحرک</span>
+          )}
           {owned && (
             <span className="ms-auto inline-flex items-center gap-1 text-xs text-online">
               <Check className="size-3.5" />

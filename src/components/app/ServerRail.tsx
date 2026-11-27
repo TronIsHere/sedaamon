@@ -1,7 +1,8 @@
-import { Compass, MessageCircle, Plus, Users } from "lucide-react";
+import { Compass, MessageCircle, Plus, ShoppingBag, Users } from "lucide-react";
 import { BrandMark } from "@/components/BrandMark";
 import { cn } from "@/lib/format";
 import { toPersianDigits } from "@/lib/phone";
+import { openStore } from "@/lib/store";
 import type { MeDTO, ServerDTO } from "@/lib/types";
 
 export default function ServerRail({
@@ -53,6 +54,9 @@ export default function ServerRail({
         </RailButton>
         <RailButton label="کاوش سرورها" onClick={onDiscover}>
           <Compass className="size-5" />
+        </RailButton>
+        <RailButton label="فروشگاه" onClick={() => openStore()}>
+          <ShoppingBag className="size-5" />
         </RailButton>
       </div>
 

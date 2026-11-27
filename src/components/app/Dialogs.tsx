@@ -583,7 +583,7 @@ export function ProfileDialog({
     <Modal title="تنظیمات حساب" onClose={onClose}>
       <div className="mb-5 flex items-center gap-4 rounded-2xl bg-ink-850 p-4 ring-1 ring-line">
         <div className="relative">
-          <Avatar user={{ name: name || me.name, color: me.color, avatar: me.avatar }} size="lg" />
+          <Avatar user={{ name: name || me.name, color: me.color, avatar: me.avatar, frame: me.frame }} size="lg" />
           {photoBusy && (
             <span className="absolute inset-0 grid place-items-center rounded-full bg-black/60">
               <Loader2 className="size-6 animate-spin" />

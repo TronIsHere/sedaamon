@@ -363,6 +363,215 @@ button:disabled {
   box-shadow: 0 0 8px rgb(16 185 129 / 0.3);
 }
 
+/* Drawn frames (components/app/FrameArt): an SVG 1.4× the picture, centred on it, free to spill past its edge.
+ * Inside it, a moving shape turns or pulses about its own centre (fill-box); `.fa-orbit` turns about the picture's centre,
+ * which is the SVG's 0,0. Lengths in px are SVG units here: the picture is 100 across. */
+.frame-art {
+  position: absolute;
+  inset: -20%;
+  width: 140%;
+  height: 140%;
+  overflow: visible;
+  pointer-events: none;
+}
+/* Only the moving parts: a still shape placed with a transform attribute keeps SVG's own origin. */
+.frame-art [class*="fa-"] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+.frame-art .fa-orbit {
+  transform-box: view-box;
+  transform-origin: 0 0;
+  animation-name: frame-spin;
+  animation-timing-function: linear;
+}
+.fa-spin {
+  animation-name: frame-spin;
+  animation-timing-function: linear !important;
+}
+.fa-pulse {
+  animation-name: fa-pulse;
+}
+.fa-twinkle {
+  animation-name: fa-twinkle;
+}
+.fa-flicker {
+  animation-name: fa-flicker;
+  animation-timing-function: steps(1, end) !important;
+}
+.fa-blink {
+  animation-name: fa-blink;
+  animation-timing-function: steps(1, end) !important;
+}
+.fa-bob {
+  animation-name: fa-bob;
+}
+.fa-drift {
+  animation-name: fa-drift;
+}
+.fa-flap {
+  transform-origin: left center !important;
+  animation-name: fa-flap;
+}
+.fa-rock {
+  animation-name: fa-rock;
+}
+.fa-sway {
+  animation-name: fa-sway;
+}
+.fa-fall {
+  animation-name: fa-fall;
+  animation-timing-function: linear !important;
+}
+.fa-ripple {
+  animation-name: fa-ripple;
+  animation-timing-function: ease-out !important;
+}
+.fa-beat {
+  animation-name: fa-beat;
+}
+.fa-glitch {
+  animation-name: fa-glitch;
+  animation-timing-function: steps(1, end) !important;
+}
+
+@keyframes fa-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+@keyframes fa-twinkle {
+  0%,
+  100% {
+    opacity: 0.2;
+    transform: scale(0.45);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* A bolt strikes twice, then stays dark for most of its loop. */
+@keyframes fa-flicker {
+  0% {
+    opacity: 1;
+  }
+  5% {
+    opacity: 0.15;
+  }
+  9% {
+    opacity: 1;
+  }
+  20% {
+    opacity: 0.8;
+  }
+  26% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes fa-blink {
+  50% {
+    opacity: 0.15;
+  }
+}
+@keyframes fa-bob {
+  50% {
+    transform: translateY(-2.5px);
+  }
+}
+@keyframes fa-drift {
+  50% {
+    transform: translateX(3.5px);
+  }
+}
+@keyframes fa-flap {
+  50% {
+    transform: rotate(-14deg);
+  }
+}
+@keyframes fa-rock {
+  50% {
+    transform: rotate(-12deg);
+  }
+}
+@keyframes fa-sway {
+  0%,
+  100% {
+    transform: rotate(-10deg);
+  }
+  50% {
+    transform: rotate(12deg) scale(1.06);
+  }
+}
+@keyframes fa-fall {
+  0% {
+    opacity: 0;
+    transform: translate(0, -66px) rotate(0);
+  }
+  12%,
+  80% {
+    opacity: 0.95;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--dx, 0), 66px) rotate(var(--rot, 0deg));
+  }
+}
+@keyframes fa-ripple {
+  0% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.24);
+  }
+}
+/* Two quick beats and a rest, like a heart. */
+@keyframes fa-beat {
+  0%,
+  40%,
+  100% {
+    opacity: 0.15;
+  }
+  12% {
+    opacity: 0.7;
+  }
+  24% {
+    opacity: 0.25;
+  }
+  32% {
+    opacity: 0.6;
+  }
+}
+@keyframes fa-glitch {
+  0%,
+  84% {
+    opacity: 0;
+    transform: none;
+  }
+  86% {
+    opacity: 0.9;
+    transform: translate(-2.5px, 1px);
+  }
+  90% {
+    opacity: 0.9;
+    transform: translate(2px, -1.5px);
+  }
+  94% {
+    opacity: 0.5;
+    transform: translate(-1px, 0);
+  }
+  97% {
+    opacity: 0;
+  }
+}
+
 /* Backgrounds: the element gets `.profile-bg` plus one look; its own children stay above the layers. */
 .profile-bg {
   position: relative;

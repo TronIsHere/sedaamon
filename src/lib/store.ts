@@ -42,10 +42,25 @@ export interface StoreItem {
   hint: string;
   price: number;
   animated?: boolean;
+  /** A drawn frame that reaches past the picture (components/app/FrameArt), rather than a plain ring. */
+  special?: boolean;
 }
 
-/** Rings drawn around the profile picture; their look lives in globals.css under `.frame-<name>`. */
+/**
+ * Frames around the profile picture. The special ones are drawn art (components/app/FrameArt); the rest are rings
+ * whose look lives in globals.css under `.frame-<name>`.
+ */
 const FRAMES: StoreItem[] = [
+  { id: "frame:shamseh", kind: "frame", name: "شمسه", hint: "خورشید طلایی با پرتوهای چرخان، از نقش گنبدها و کتاب‌آرایی ایرانی", price: 500, animated: true, special: true },
+  { id: "frame:lightning", kind: "frame", name: "صاعقه", hint: "رعد و برق زردی که دور عکس می‌جهد", price: 400, animated: true, special: true },
+  { id: "frame:halo", kind: "frame", name: "فرشته", hint: "هالهٔ طلایی و بال بالای سر، ابرهای نرم زیر عکس", price: 450, animated: true, special: true },
+  { id: "frame:shadowfire", kind: "frame", name: "آتش سایه", hint: "شعله‌های بنفش که دور عکس زبانه می‌کشند", price: 500, animated: true, special: true },
+  { id: "frame:snow", kind: "frame", name: "برف زمستانی", hint: "برف می‌بارد و پای قاب می‌نشیند", price: 400, animated: true, special: true },
+  { id: "frame:blossom", kind: "frame", name: "باران شکوفه", hint: "شکوفه‌های گیلاس دور عکس و گلبرگ‌هایی که می‌ریزند", price: 380, animated: true, special: true },
+  { id: "frame:moonlit", kind: "frame", name: "ماه و ستاره", hint: "هلال ماه و ستاره‌هایی که چشمک می‌زنند", price: 350, animated: true, special: true },
+  { id: "frame:thorns", kind: "frame", name: "خار سرخ", hint: "پیچک خاردار سرخ با درخششی مثل ضربان قلب", price: 450, animated: true, special: true },
+  { id: "frame:cyber", kind: "frame", name: "سایبرپانک", hint: "حلقه‌های زرد چرخان، نشانه‌های دیجیتال و پرش تصویر", price: 450, animated: true, special: true },
+  { id: "frame:pulse", kind: "frame", name: "ضربان", hint: "نور سرخی که دور قاب می‌دود و با هر ضربه موج می‌زند", price: 300, animated: true, special: true },
   { id: "frame:neon", kind: "frame", name: "نئون", hint: "حلقهٔ آبی و صورتی که دور عکس می‌چرخد", price: 150, animated: true },
   { id: "frame:gold", kind: "frame", name: "طلایی", hint: "قاب طلایی با برق آرام", price: 200, animated: true },
   { id: "frame:fire", kind: "frame", name: "آتش", hint: "شعله‌های نارنجی که می‌تپند", price: 220, animated: true },
